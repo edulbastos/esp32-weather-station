@@ -4,14 +4,9 @@ An ESP32 weather station that reads **temperature**, **humidity** and **air pres
 
 Written in C++ with **ESP-IDF v6.1** and **FreeRTOS**, with no external libraries: the BME280 and SSD1306 drivers are implemented directly on top of the ESP-IDF I2C driver.
 
-```
-┌────────────────────────────┐
-│      WEATHER STATION       │  ← yellow band of the display
-│ TEMP          23.4 °C      │
-│ HUM           56.1 %RH     │
-│ PRES        1012.8 hPa     │
-└────────────────────────────┘
-```
+<p align="center">
+  <img src="picture1.jpeg" alt="AE-BTG-ESP32 board with the OLED display showing temperature, humidity and pressure readings" width="600">
+</p>
 
 ## Hardware
 
