@@ -1,6 +1,6 @@
 # Functional Specification: ESP32 Weather Station
 
-**Version:** 1.0.0
+**Version:** 1.1.0
 
 ## Document Control
 
@@ -9,6 +9,7 @@
 | Version | Date       | Changes                                   |
 |---------|------------|-------------------------------------------|
 | 1.0.0   | 2026-10-15 | Initial specification and implementation. |
+| 1.1.0   | 2026-10-15 | Time of day via Wi-Fi + NTP (FR-5.1 to FR-5.6). |
 
 ### Requirement Markers
 *   **`[PROPOSED]`**: The requirement is new and not implemented yet.
@@ -63,6 +64,14 @@ The main goal is to provide a weather station that is easy to build and use, del
 *   **FR-4.2:** The system MUST output an error message on the serial console (via `ESP_LOGE`) if the BME280 sensor cannot be initialized.
 *   **FR-4.3:** In the event of a critical initialization error (display or sensor), the system MUST remain in an error mode or stop operating.
 
+### 3.5 Time of Day
+*   **FR-5.1** [v1.1.0]: The system MUST obtain the current date and time from an NTP server (default `pool.ntp.org`) over Wi-Fi (station mode) and keep the clock synchronized periodically.
+*   **FR-5.2** [v1.1.0]: The local time MUST use the time zone defined in `main/config.h` (default: UTC-3, Brasília, without daylight saving time).
+*   **FR-5.3** [v1.1.0]: Once the clock is synchronized, the OLED header MUST show the date and time as `DD/MM/YYYY HH:MM`. Before synchronization, the header shows the title "WEATHER STATION". A sensor error ("SENSOR ERROR") takes precedence over the date and time.
+*   **FR-5.4** [v1.1.0]: Once the clock is synchronized, every measurement written to the serial console MUST be prefixed with a timestamp in the format `YYYY-MM-DD HH:MM:SS`.
+*   **FR-5.5** [v1.1.0]: Wi-Fi or NTP failures MUST NOT be critical errors: the weather station MUST keep measuring and displaying, log a warning (`ESP_LOGW`), and retry the Wi-Fi connection periodically (every 10 s by default).
+*   **FR-5.6** [v1.1.0]: The Wi-Fi credentials (SSID and password) MUST be set via `idf.py menuconfig` ("Weather Station" menu) and stored only in the local `sdkconfig`, which is not version-controlled. With an empty SSID, Wi-Fi and the time of day are disabled.
+
 ## 4. Non-Functional Requirements
 
 ### 4.1 Performance
@@ -99,17 +108,23 @@ The main goal is to provide a weather station that is easy to build and use, del
     *   `esp_driver_i2c` (`driver/i2c_master.h`, I2C master communication)
     *   `esp_driver_gpio` (GPIO configuration)
     *   `esp_log` (serial debug output)
+    *   `esp_wifi`, `esp_netif`, `esp_event`, `lwip` (Wi-Fi station and TCP/IP stack)
+    *   `esp_netif_sntp` (NTP time synchronization, part of `esp_netif`)
+    *   `nvs_flash` (non-volatile storage required by the Wi-Fi driver)
 *   **Project modules:**
     *   `bme280.h` / `bme280.cpp` (driver for the BME280 sensor, using the Bosch datasheet compensation formulas)
     *   `ssd1306.h` / `ssd1306.cpp` (driver for the SSD1306 OLED, with a local frame buffer)
     *   `font5x7.h` (5x7 font for text output, including a degree sign)
+    *   `net_time.h` / `net_time.cpp` (Wi-Fi connection with automatic reconnection, and NTP time synchronization)
     *   `config.h` (central configuration)
+    *   `Kconfig.projbuild` ("Weather Station" menu in `idf.py menuconfig` for the Wi-Fi credentials)
     *   `main.cpp` (initialization and the FreeRTOS tasks `taskMeasure` and `taskDisplay`)
 
 ## 6. Interfaces
 
 ### 6.1 User Interface (OLED)
 *   Display of temperature, humidity, and air pressure.
+*   Date and time in the header once the clock is synchronized.
 
 ### 6.2 Hardware Interfaces
 *   **I2C bus:** Uses GPIO 21 (SDA) and GPIO 22 (SCL) of the ESP32.
@@ -118,10 +133,14 @@ The main goal is to provide a weather station that is easy to build and use, del
 ### 6.3 Serial Interface
 *   The serial interface is used for debug output at 115200 baud (ESP-IDF console UART, viewed with `idf.py monitor`).
 
+### 6.4 Network Interface
+*   **Wi-Fi:** 2.4 GHz station mode (WPA2-PSK, or an open network if no password is set).
+*   **NTP:** SNTP client (UDP port 123), default server `pool.ntp.org`.
+
 ## 7. Open Issues / Future Extensions
 
 *   **Wi-Fi connectivity:** Add a feature to transmit weather data to a server or cloud service.
 *   **Data logging:** Store historical weather data on an SD card or in the ESP32's internal flash memory.
 *   **Web server:** Implement a simple web server on the ESP32 to display the data on the local network.
 *   **Calibration:** Provide a way to calibrate the sensor data.
-*   **Time of day:** Integrate a real-time clock (RTC) to timestamp the data.
+*   **Hardware RTC:** Add an RTC module (e.g. DS3231) so the time of day survives power loss without Wi-Fi (the time of day via NTP is implemented in v1.1.0).

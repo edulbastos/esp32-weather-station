@@ -1,6 +1,6 @@
 # ESP32 Weather Station
 
-An ESP32 weather station that reads **temperature**, **humidity** and **air pressure** from a BME280 sensor and shows the values in real time on the 0.96" SSD1306 OLED display built into the ideaspark ESP32 development board.
+An ESP32 weather station that reads **temperature**, **humidity** and **air pressure** from a BME280 sensor and shows the values in real time on the 0.96" SSD1306 OLED display built into the ideaspark ESP32 development board. The date and time are fetched over Wi-Fi from an NTP server.
 
 Written in C++ with **ESP-IDF v6.1** and **FreeRTOS**, with no external libraries: the BME280 and SSD1306 drivers are implemented directly on top of the ESP-IDF I2C driver.
 
@@ -43,18 +43,23 @@ source ~/.espressif/tools/activate_idf_v6.1.sh
 # 2. Set the target (first time only)
 idf.py set-target esp32
 
-# 3. Build
+# 3. Set the Wi-Fi credentials (first time only): "Weather Station" menu
+idf.py menuconfig
+
+# 4. Build
 idf.py build
 
-# 4. Flash and open the serial monitor (adjust the port)
+# 5. Flash and open the serial monitor (adjust the port)
 idf.py -p /dev/ttyUSB0 flash monitor
 ```
 
 The serial monitor runs at 115200 baud and prints the readings, for example:
 
 ```
-I (1234) weather: T=23.41 C  H=56.12 %RH  P=1012.84 hPa  Alt~3 m
+I (1234) weather: 2026-10-15 14:32:05  T=23.41 C  H=56.12 %RH  P=1012.84 hPa  Alt~3 m
 ```
+
+The timestamp appears once the clock has been synchronized via NTP. The Wi-Fi credentials are stored only in the local `sdkconfig`, which is not committed. With no SSID configured, the station works normally without the date and time.
 
 ## Configuration
 
@@ -64,14 +69,17 @@ All tunable parameters live in [main/config.h](main/config.h):
 - BME280 and SSD1306 addresses;
 - display size (128x64 or 128x32), contrast and yellow band;
 - sea-level pressure used for the altitude estimate;
-- task periods, stack sizes and priorities.
+- task periods, stack sizes and priorities;
+- NTP server, time zone (default UTC-3) and Wi-Fi retry interval.
 
 ## Architecture
 
 The firmware runs two FreeRTOS tasks:
 
 - **`taskMeasure`**: reads the BME280 every 2 s.
-- **`taskDisplay`**: refreshes the display every 1 s.
+- **`taskDisplay`**: refreshes the display every 1 s, with the date and time in the header.
+
+Wi-Fi and NTP run in the background (`net_time`) and reconnect on their own; network failures never stop the station.
 
 The `i2cMutex` mutex controls access to the I2C bus, and `dataMutex` protects the data shared between the tasks. After 3 consecutive failures, the device is re-initialized automatically. If the display or the sensor fails to start at boot, the system halts and signals the error through the LED and the serial console.
 
@@ -81,7 +89,9 @@ main/
 ├── config.h      # central configuration
 ├── bme280.*      # BME280 driver (Bosch compensation formulas)
 ├── ssd1306.*     # SSD1306 driver with a local frame buffer
-└── font5x7.h     # 5x7 font (ASCII + degree sign)
+├── font5x7.h     # 5x7 font (ASCII + degree sign)
+├── net_time.*    # Wi-Fi station + NTP time of day
+└── Kconfig.projbuild  # menuconfig menu for the Wi-Fi credentials
 ```
 
 The full functional specification is in [esp32-weather-station.md](esp32-weather-station.md).
@@ -92,4 +102,4 @@ The full functional specification is in [esp32-weather-station.md](esp32-weather
 - Log history to an SD card or the internal flash
 - Local web server to view the readings
 - Sensor calibration
-- Real-time clock (RTC) to timestamp the data
+- Hardware RTC module so the time survives power loss without Wi-Fi

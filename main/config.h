@@ -6,6 +6,7 @@
 #include "driver/gpio.h"
 #include "driver/i2c_types.h"
 #include "freertos/FreeRTOS.h"
+#include "sdkconfig.h"
 
 namespace config {
 
@@ -40,6 +41,18 @@ constexpr int     DISPLAY_YELLOW_ROWS = 16;
 // ---------------------------------------------------------------------------
 // Reference sea-level pressure used for the altitude estimate (hPa)
 constexpr float SEA_LEVEL_PRESSURE_HPA = 1013.25f;
+
+// ---------------------------------------------------------------------------
+// Time of day via Wi-Fi + NTP (FR-5.x)
+// ---------------------------------------------------------------------------
+// Credentials come from `idf.py menuconfig` -> "Weather Station" and live only
+// in the local sdkconfig, so they are never committed (FR-5.6).
+constexpr const char *WIFI_SSID           = CONFIG_WS_WIFI_SSID;
+constexpr const char *WIFI_PASSWORD       = CONFIG_WS_WIFI_PASSWORD;
+constexpr uint32_t    WIFI_RETRY_DELAY_MS = 10000;
+constexpr const char *NTP_SERVER          = "pool.ntp.org";
+// POSIX TZ string: UTC-3, Brasilia time, no daylight saving time
+constexpr const char *TIMEZONE            = "<-03>3";
 
 // ---------------------------------------------------------------------------
 // Status LED (blue LED on GPIO2 of the board), used to signal error mode

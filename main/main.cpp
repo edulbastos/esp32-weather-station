@@ -6,8 +6,10 @@
 //   taskDisplay - redraws the OLED every DISPLAY_PERIOD_MS
 // i2cMutex serializes access to the shared I2C bus, dataMutex protects the
 // latest measurement shared between the two tasks.
+// Wi-Fi and NTP (net_time) run in the background and provide the time of day.
 
 #include <cstdio>
+#include <ctime>
 #include "bme280.h"
 #include "config.h"
 #include "driver/gpio.h"
@@ -16,6 +18,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "net_time.h"
 #include "ssd1306.h"
 
 static const char *TAG = "weather";
@@ -131,9 +134,17 @@ void render_screen(const SharedData &data)
         snprintf(press, sizeof(press), "----.-");
     }
 
+    // FR-5.3: the header shows the date and time once the clock is synchronized.
+    char clock_text[20];
+    struct tm now;
+    const bool has_time = net_time::local_time(now);
+    if (has_time) {
+        strftime(clock_text, sizeof(clock_text), "%d/%m/%Y %H:%M", &now);
+    }
+
     s_display.clear();
     if (TALL) {
-        const char *title = data.valid ? "WEATHER STATION" : "SENSOR ERROR";
+        const char *title = !data.valid ? "SENSOR ERROR" : has_time ? clock_text : "WEATHER STATION";
         // Title vertically centered in the header band.
         s_display.draw_string((Ssd1306::WIDTH - Ssd1306::text_width(title)) / 2, (HEADER_H - 7) / 2, title);
         if (config::DISPLAY_YELLOW_ROWS == 0) {
@@ -170,7 +181,13 @@ void taskMeasure(void *)
 
         if (err == ESP_OK) {
             errors = 0;
-            ESP_LOGI(TAG, "T=%.2f C  H=%.2f %%RH  P=%.2f hPa  Alt~%.0f m",
+            // FR-5.4: timestamp the reading once the clock is synchronized.
+            char stamp[24] = "";
+            struct tm now;
+            if (net_time::local_time(now)) {
+                strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S  ", &now);
+            }
+            ESP_LOGI(TAG, "%sT=%.2f C  H=%.2f %%RH  P=%.2f hPa  Alt~%.0f m", stamp,
                      sample.temperature_c, sample.humidity_rh, sample.pressure_hpa,
                      Bme280::altitude_m(sample.pressure_hpa, config::SEA_LEVEL_PRESSURE_HPA));
         } else {
@@ -280,6 +297,12 @@ extern "C" void app_main(void)
         xTaskCreate(taskDisplay, "taskDisplay", config::DISPLAY_TASK_STACK, nullptr,
                     config::DISPLAY_TASK_PRIO, nullptr) != pdPASS) {
         enter_error_mode("Task creation failed", true);
+    }
+
+    // FR-5.5: Wi-Fi/NTP problems are not critical, the station keeps running.
+    err = net_time::start();
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+        ESP_LOGW(TAG, "Time of day unavailable: %s", esp_err_to_name(err));
     }
 
     ESP_LOGI(TAG, "Running: measure every %lu ms, display every %lu ms",

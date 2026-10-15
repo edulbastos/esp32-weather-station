@@ -1,0 +1,16 @@
+menu "Weather Station"
+
+    config WS_WIFI_SSID
+        string "Wi-Fi SSID"
+        default ""
+        help
+            Network used to get the time of day via NTP. Leave empty to
+            disable Wi-Fi. Stored only in the local sdkconfig (not committed).
+
+    config WS_WIFI_PASSWORD
+        string "Wi-Fi password"
+        default ""
+        help
+            Password of the Wi-Fi network. Leave empty for an open network.
+
+endmenu

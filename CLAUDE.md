@@ -20,6 +20,8 @@ The project is built with ESP-IDF (v6.1) and uses FreeRTOS to run sensor measure
 *   `main/bme280.h`, `main/bme280.cpp`: BME280 driver with the Bosch datasheet compensation formulas.
 *   `main/ssd1306.h`, `main/ssd1306.cpp`: SSD1306 driver with a local frame buffer.
 *   `main/font5x7.h`: 5x7 font (ASCII plus a degree sign at `0x7F`).
+*   `main/net_time.h`, `main/net_time.cpp`: Wi-Fi station with automatic reconnection and NTP time sync (time of day).
+*   `main/Kconfig.projbuild`: "Weather Station" menuconfig menu for the Wi-Fi credentials.
 *   `main/main.cpp`: `app_main`, initialization, and the FreeRTOS tasks.
 
 ## Build and Run Process
@@ -30,6 +32,7 @@ No external libraries are required. The drivers use only ESP-IDF components:
 
 *   `esp_driver_i2c` (`driver/i2c_master.h`): I2C master driver
 *   `esp_driver_gpio`
+*   `esp_wifi`, `esp_netif` (including SNTP), `esp_event`, `lwip`, `nvs_flash`
 *   FreeRTOS (part of ESP-IDF)
 
 The Arduino libraries (`Wire.h`, `Adafruit_GFX.h`, `Adafruit_SSD1306.h`, `Adafruit_BME280.h`) are not used.
@@ -39,14 +42,15 @@ The Arduino libraries (`Wire.h`, `Adafruit_GFX.h`, `Adafruit_SSD1306.h`, `Adafru
 1.  Activate the ESP-IDF environment:
     `source ~/.espressif/tools/activate_idf_v6.1.sh`
 2.  Set the target (only needed once): `idf.py set-target esp32`
-3.  Build: `idf.py build`
-4.  Flash and open the serial monitor (adjust the port):
+3.  Set the Wi-Fi credentials (only needed once): `idf.py menuconfig` → "Weather Station". They are stored in the local `sdkconfig`, which is not committed.
+4.  Build: `idf.py build`
+5.  Flash and open the serial monitor (adjust the port):
     `idf.py -p /dev/ttyUSB0 flash monitor`
 
 ## Development Conventions
 
 *   The code is written in C++; the entry point is `extern "C" void app_main(void)`.
-*   All configurable values belong in `main/config.h`; do not hard-code them elsewhere.
+*   All configurable values belong in `main/config.h`; do not hard-code them elsewhere. Exception: secrets (Wi-Fi credentials) come from Kconfig and are never committed.
 *   Use `ESP_LOGI`/`ESP_LOGW`/`ESP_LOGE` for serial output and return `esp_err_t` from driver functions.
 
 The code is divided into two main tasks:
@@ -55,6 +59,8 @@ The code is divided into two main tasks:
 *   **`taskDisplay`:** Updates the OLED display with the current weather data every 1 second.
 
 The two tasks are synchronized via a mutex (`i2cMutex`) to control access to the I2C bus. A second mutex (`dataMutex`) protects the shared measurement data.
+
+Wi-Fi and SNTP (`net_time`) run in the background, driven by ESP-IDF events; network failures are never critical errors.
 
 ## Specification and Release Workflow
 
