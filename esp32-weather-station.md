@@ -66,7 +66,8 @@ The main goal is to provide a weather station that is easy to build and use, del
 ## 5. Technical Architecture (Summary)
 
 ### 5.1 Hardware Components
-*   **Microcontroller:** ESP32 (ESP32 Dev Module)
+*   **Board:** ideaspark ESP32 development board with built-in 0.96" OLED
+*   **Microcontroller:** ESP32 (ESP-WROOM-32 module)
 *   **Sensor:** BME280 (temperature, humidity, pressure)
 *   **Display:** SSD1306 OLED (I2C, 128x64 pixels)
 

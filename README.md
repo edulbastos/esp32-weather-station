@@ -1,18 +1,19 @@
 # ESP32 Weather Station
 
-An ESP32 weather station that reads **temperature**, **humidity** and **air pressure** from a BME280 sensor and shows the values in real time on the 0.96" SSD1306 OLED display built into the AE-BTG-ESP32 board.
+An ESP32 weather station that reads **temperature**, **humidity** and **air pressure** from a BME280 sensor and shows the values in real time on the 0.96" SSD1306 OLED display built into the ideaspark ESP32 development board.
 
 Written in C++ with **ESP-IDF v6.1** and **FreeRTOS**, with no external libraries: the BME280 and SSD1306 drivers are implemented directly on top of the ESP-IDF I2C driver.
 
 <p align="center">
-  <img src="picture1.jpeg" alt="AE-BTG-ESP32 board with the OLED display showing temperature, humidity and pressure readings" width="600">
+  <img src="picture1.jpeg" alt="ideaspark ESP32 board with its 0.96&quot; OLED display showing temperature, humidity and pressure readings" width="600">
 </p>
 
 ## Hardware
 
 | Component | Description |
 |---|---|
-| Board | AE-BTG-ESP32 with built-in 0.96" SSD1306 OLED (128x64, I2C) |
+| Board | ideaspark ESP32 development board with built-in 0.96" SSD1306 OLED (128x64, I2C) |
+| Module | ESP-WROOM-32 (ESP32, Wi-Fi + Bluetooth) |
 | Sensor | BME280 (temperature, humidity, pressure), I2C |
 | Power supply | 3.3 V |
 

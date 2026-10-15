@@ -8,7 +8,7 @@ The project is built with ESP-IDF (v6.1) and uses FreeRTOS to run sensor measure
 
 **Main components:**
 
-*   **ESP32 AE-BTG-ESP320960LED:** Microcontroller
+*   **ideaspark ESP32 0.96" OLED board (ESP-WROOM-32):** Microcontroller board with the SSD1306 display built in
 *   **BME280:** Sensor for temperature, humidity, and air pressure
 *   **SSD1306:** OLED display (128x64, I2C)
 
