@@ -18,7 +18,7 @@
 *   Requirements without a marker exist since v1.0.0.
 *   Requirement IDs are never reused or renumbered.
 
-Older versions of this document are kept as git tags: `git show v1.0.0:esp32-weather-station.md`.
+Older versions of this document are kept as git tags: `git show vX.Y.Z:esp32-weather-station.md`. In v1.0.0 the file was still named `AE-BTG-ESP32096OLED_fsd.md`.
 
 ## 1. Introduction
 
