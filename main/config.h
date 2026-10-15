@@ -53,6 +53,10 @@ constexpr uint32_t    WIFI_RETRY_DELAY_MS = 10000;
 constexpr const char *NTP_SERVER          = "pool.ntp.org";
 // POSIX TZ string: UTC-3, Brasilia time, no daylight saving time
 constexpr const char *TIMEZONE            = "<-03>3";
+// Signal strength thresholds for the Wi-Fi header icon (FR-5.7):
+// >= GOOD -> 3 arcs, >= FAIR -> 2 arcs, below -> 1 arc
+constexpr int8_t      WIFI_RSSI_GOOD_DBM  = -60;
+constexpr int8_t      WIFI_RSSI_FAIR_DBM  = -70;
 
 // ---------------------------------------------------------------------------
 // Status LED (blue LED on GPIO2 of the board), used to signal error mode

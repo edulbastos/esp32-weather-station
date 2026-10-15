@@ -16,4 +16,8 @@ esp_err_t start();
 // synchronized yet.
 bool local_time(struct tm &out);
 
+// Wi-Fi status for the header icon (FR-5.7): -1 = Wi-Fi not configured or not
+// started, 0 = disconnected, 1..3 = connected with weak/fair/good signal.
+int wifi_level();
+
 }  // namespace net_time

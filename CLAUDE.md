@@ -20,7 +20,7 @@ The project is built with ESP-IDF (v6.1) and uses FreeRTOS to run sensor measure
 *   `main/bme280.h`, `main/bme280.cpp`: BME280 driver with the Bosch datasheet compensation formulas.
 *   `main/ssd1306.h`, `main/ssd1306.cpp`: SSD1306 driver with a local frame buffer.
 *   `main/font5x7.h`: 5x7 font (ASCII plus a degree sign at `0x7F`).
-*   `main/net_time.h`, `main/net_time.cpp`: Wi-Fi station with automatic reconnection and NTP time sync (time of day).
+*   `main/net_time.h`, `main/net_time.cpp`: Wi-Fi station with automatic reconnection, signal level for the header icon, and NTP time sync (time of day).
 *   `main/Kconfig.projbuild`: "Weather Station" menuconfig menu for the Wi-Fi credentials.
 *   `main/main.cpp`: `app_main`, initialization, and the FreeRTOS tasks.
 

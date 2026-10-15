@@ -19,6 +19,8 @@ static const char *TAG = "net_time";
 namespace {
 
 std::atomic<bool> s_synced{false};
+std::atomic<bool> s_started{false};
+std::atomic<bool> s_connected{false};
 TimerHandle_t s_retry_timer = nullptr;
 
 void retry_connect(TimerHandle_t)
@@ -32,6 +34,7 @@ void on_event(void *, esp_event_base_t base, int32_t id, void *data)
         esp_wifi_connect();
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         // FR-5.5: keep trying, but not in a tight loop.
+        s_connected = false;
         const auto *info = static_cast<wifi_event_sta_disconnected_t *>(data);
         ESP_LOGW(TAG, "Wi-Fi disconnected (reason %d), retrying in %lu ms", info->reason,
                  static_cast<unsigned long>(config::WIFI_RETRY_DELAY_MS));
@@ -39,6 +42,7 @@ void on_event(void *, esp_event_base_t base, int32_t id, void *data)
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         const auto *info = static_cast<ip_event_got_ip_t *>(data);
         ESP_LOGI(TAG, "Wi-Fi connected, IP " IPSTR, IP2STR(&info->ip_info.ip));
+        s_connected = true;
     }
 }
 
@@ -108,6 +112,7 @@ esp_err_t start()
         (err = esp_wifi_start()) != ESP_OK) {
         return err;
     }
+    s_started = true;
 
     // FR-5.1: SNTP retries and re-syncs periodically on its own.
     esp_sntp_config_t sntp_cfg = ESP_NETIF_SNTP_DEFAULT_CONFIG(config::NTP_SERVER);
@@ -127,6 +132,21 @@ bool local_time(struct tm &out)
     const time_t now = time(nullptr);
     localtime_r(&now, &out);
     return true;
+}
+
+int wifi_level()
+{
+    if (!s_started) {
+        return -1;
+    }
+    wifi_ap_record_t ap;
+    if (!s_connected || esp_wifi_sta_get_ap_info(&ap) != ESP_OK) {
+        return 0;
+    }
+    if (ap.rssi >= config::WIFI_RSSI_GOOD_DBM) {
+        return 3;
+    }
+    return ap.rssi >= config::WIFI_RSSI_FAIR_DBM ? 2 : 1;
 }
 
 }  // namespace net_time

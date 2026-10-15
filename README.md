@@ -4,9 +4,19 @@ An ESP32 weather station that reads **temperature**, **humidity** and **air pres
 
 Written in C++ with **ESP-IDF v6.1** and **FreeRTOS**, with no external libraries: the BME280 and SSD1306 drivers are implemented directly on top of the ESP-IDF I2C driver.
 
-<p align="center">
-  <img src="picture1.jpeg" alt="ideaspark ESP32 board with its 0.96&quot; OLED display showing temperature, humidity and pressure readings" width="600">
-</p>
+What the OLED display shows (128x64):
+
+```
++--------------------------------+
+|   15/10/2026 14:32        ((o  |  <- yellow band: date/time + Wi-Fi icon
++--------------------------------+
+| TEMP              23.4  oC     |
+| HUM               56.1  %RH    |
+| PRES            1012.8  hPa    |
++--------------------------------+
+```
+
+The Wi-Fi icon shows 1 to 3 arcs according to the signal strength and an X while disconnected. Before the clock is synchronized, the header shows "WEATHER STATION".
 
 ## Hardware
 
@@ -70,14 +80,14 @@ All tunable parameters live in [main/config.h](main/config.h):
 - display size (128x64 or 128x32), contrast and yellow band;
 - sea-level pressure used for the altitude estimate;
 - task periods, stack sizes and priorities;
-- NTP server, time zone (default UTC-3) and Wi-Fi retry interval.
+- NTP server, time zone (default UTC-3), Wi-Fi retry interval and signal icon thresholds.
 
 ## Architecture
 
 The firmware runs two FreeRTOS tasks:
 
 - **`taskMeasure`**: reads the BME280 every 2 s.
-- **`taskDisplay`**: refreshes the display every 1 s, with the date and time in the header.
+- **`taskDisplay`**: refreshes the display every 1 s, with the date and time and a Wi-Fi signal icon in the header.
 
 Wi-Fi and NTP run in the background (`net_time`) and reconnect on their own; network failures never stop the station.
 

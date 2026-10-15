@@ -110,6 +110,39 @@ void draw_value_row(int y, const char *label, const char *value, const char *uni
     s_display.draw_string(UNIT_X, small_y, unit);
 }
 
+// FR-5.7: Wi-Fi icon, 9x7 pixels. Each digit is the minimum signal level at
+// which that pixel is drawn (0 = the dot, shown whenever connected).
+constexpr int WIFI_ICON_W = 9;
+constexpr int WIFI_ICON_H = 7;
+constexpr const char *WIFI_ICON[WIFI_ICON_H] = {
+    ".3333333.",
+    "3.......3",
+    "..22222..",
+    ".2.....2.",
+    "...111...",
+    "..1...1..",
+    "....0....",
+};
+
+// level: 0 = disconnected (drawn as an X), 1..3 = number of arcs.
+void draw_wifi_icon(int x, int y, int level)
+{
+    for (int row = 0; row < WIFI_ICON_H; row++) {
+        for (int col = 0; col < WIFI_ICON_W; col++) {
+            const char c = WIFI_ICON[row][col];
+            if (level == 0) {
+                // X in the lower part of the icon, where the arcs would be
+                const int dx = col - 4, dy = row - 3;
+                if (row >= 1 && (dx == dy || dx == -dy)) {
+                    s_display.draw_pixel(x + col, y + row);
+                }
+            } else if (c != '.' && c - '0' <= level) {
+                s_display.draw_pixel(x + col, y + row);
+            }
+        }
+    }
+}
+
 void render_screen(const SharedData &data)
 {
     // 128x64: header in the top (yellow) band + three rows at scale 2 in the
@@ -145,8 +178,15 @@ void render_screen(const SharedData &data)
     s_display.clear();
     if (TALL) {
         const char *title = !data.valid ? "SENSOR ERROR" : has_time ? clock_text : "WEATHER STATION";
+        // Wi-Fi icon at the right edge; the title is centered in the space left of it.
+        const int wifi = net_time::wifi_level();
+        int title_area = Ssd1306::WIDTH;
+        if (wifi >= 0) {
+            draw_wifi_icon(Ssd1306::WIDTH - WIFI_ICON_W, (HEADER_H - WIFI_ICON_H) / 2, wifi);
+            title_area -= WIFI_ICON_W + 2;
+        }
         // Title vertically centered in the header band.
-        s_display.draw_string((Ssd1306::WIDTH - Ssd1306::text_width(title)) / 2, (HEADER_H - 7) / 2, title);
+        s_display.draw_string((title_area - Ssd1306::text_width(title)) / 2, (HEADER_H - 7) / 2, title);
         if (config::DISPLAY_YELLOW_ROWS == 0) {
             s_display.draw_hline(0, HEADER_H - 2, Ssd1306::WIDTH);  // two-color panels need no separator
         }

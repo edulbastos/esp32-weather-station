@@ -1,6 +1,6 @@
 # Functional Specification: ESP32 Weather Station
 
-**Version:** 1.1.0
+**Version:** 1.2.0
 
 ## Document Control
 
@@ -10,6 +10,7 @@
 |---------|------------|-------------------------------------------|
 | 1.0.0   | 2026-10-15 | Initial specification and implementation. |
 | 1.1.0   | 2026-10-15 | Time of day via Wi-Fi + NTP (FR-5.1 to FR-5.6). |
+| 1.2.0   | 2026-10-15 | Wi-Fi signal icon in the OLED header (FR-5.7). |
 
 ### Requirement Markers
 *   **`[PROPOSED]`**: The requirement is new and not implemented yet.
@@ -71,6 +72,7 @@ The main goal is to provide a weather station that is easy to build and use, del
 *   **FR-5.4** [v1.1.0]: Once the clock is synchronized, every measurement written to the serial console MUST be prefixed with a timestamp in the format `YYYY-MM-DD HH:MM:SS`.
 *   **FR-5.5** [v1.1.0]: Wi-Fi or NTP failures MUST NOT be critical errors: the weather station MUST keep measuring and displaying, log a warning (`ESP_LOGW`), and retry the Wi-Fi connection periodically (every 10 s by default).
 *   **FR-5.6** [v1.1.0]: The Wi-Fi credentials (SSID and password) MUST be set via `idf.py menuconfig` ("Weather Station" menu) and stored only in the local `sdkconfig`, which is not version-controlled. With an empty SSID, Wi-Fi and the time of day are disabled.
+*   **FR-5.7** [v1.2.0]: The OLED header MUST show a Wi-Fi icon at its right edge: 1 to 3 arcs according to the signal strength (3 arcs at RSSI ≥ -60 dBm, 2 arcs at ≥ -70 dBm, 1 arc below; thresholds in `main/config.h`) while connected, and an X while disconnected. With no SSID configured, no icon is shown. The header text is centered in the space left of the icon.
 
 ## 4. Non-Functional Requirements
 
@@ -115,7 +117,7 @@ The main goal is to provide a weather station that is easy to build and use, del
     *   `bme280.h` / `bme280.cpp` (driver for the BME280 sensor, using the Bosch datasheet compensation formulas)
     *   `ssd1306.h` / `ssd1306.cpp` (driver for the SSD1306 OLED, with a local frame buffer)
     *   `font5x7.h` (5x7 font for text output, including a degree sign)
-    *   `net_time.h` / `net_time.cpp` (Wi-Fi connection with automatic reconnection, and NTP time synchronization)
+    *   `net_time.h` / `net_time.cpp` (Wi-Fi connection with automatic reconnection and signal level, and NTP time synchronization)
     *   `config.h` (central configuration)
     *   `Kconfig.projbuild` ("Weather Station" menu in `idf.py menuconfig` for the Wi-Fi credentials)
     *   `main.cpp` (initialization and the FreeRTOS tasks `taskMeasure` and `taskDisplay`)
@@ -125,6 +127,7 @@ The main goal is to provide a weather station that is easy to build and use, del
 ### 6.1 User Interface (OLED)
 *   Display of temperature, humidity, and air pressure.
 *   Date and time in the header once the clock is synchronized.
+*   Wi-Fi signal icon at the right edge of the header.
 
 ### 6.2 Hardware Interfaces
 *   **I2C bus:** Uses GPIO 21 (SDA) and GPIO 22 (SCL) of the ESP32.
@@ -135,6 +138,7 @@ The main goal is to provide a weather station that is easy to build and use, del
 
 ### 6.4 Network Interface
 *   **Wi-Fi:** 2.4 GHz station mode (WPA2-PSK, or an open network if no password is set).
+*   **Wi-Fi:** [v1.2.0] Add a symbol to indicate WiFi connectivity in the yellow area (see FR-5.7).
 *   **NTP:** SNTP client (UDP port 123), default server `pool.ntp.org`.
 
 ## 7. Open Issues / Future Extensions
