@@ -55,3 +55,33 @@ The code is divided into two main tasks:
 *   **`taskDisplay`:** Updates the OLED display with the current weather data every 1 second.
 
 The two tasks are synchronized via a mutex (`i2cMutex`) to control access to the I2C bus. A second mutex (`dataMutex`) protects the shared measurement data.
+
+## Specification and Release Workflow
+
+The functional specification is `esp32-weather-station.md`. It is the only place where requirements are added. Specification and firmware share one version number (SemVer), and each release is an annotated git tag `vX.Y.Z`.
+
+**Version bump rules:**
+*   New functional requirement → MINOR (1.0.0 → 1.1.0)
+*   Fix, clarification, or refactoring without a new requirement → PATCH (1.1.0 → 1.1.1)
+*   Incompatible change (hardware, pinout, removed functionality) → MAJOR
+
+**When asked to process the proposed requirements:**
+1.  Find every `[PROPOSED]` marker in the specification. If there is more than one, ask whether to release them together or one version each.
+2.  Compute the new version from the latest tag (`git describe --tags --abbrev=0`).
+3.  Implement the code, following the conventions above.
+4.  Update the specification:
+    *   Replace `[PROPOSED]` with `[vX.Y.Z]`.
+    *   Update the **Version** field.
+    *   Add a row to the Revision History.
+    *   Update the affected sections (architecture, interfaces).
+    *   Remove items from section 7 that are now implemented.
+5.  Update `CLAUDE.md` and `README.md` if the structure or usage changed.
+6.  Run `idf.py build` and fix any errors.
+7.  Stop and report what changed. Do not commit yet; the user tests on the board first.
+8.  After the user approves:
+    *   Set the release date in the Revision History.
+    *   Commit with the message `Release vX.Y.Z: <summary>`.
+    *   Create an annotated tag: `git tag -a vX.Y.Z -m "<summary>"`.
+    *   Do not push unless asked.
+
+Older requirements and texts are never deleted, only marked; history lives in the git tags.

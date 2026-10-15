@@ -1,5 +1,25 @@
 # Functional Specification: ESP32 Weather Station
 
+**Version:** 1.0.0
+
+## Document Control
+
+### Revision History
+
+| Version | Date       | Changes                                   |
+|---------|------------|-------------------------------------------|
+| 1.0.0   | 2026-10-15 | Initial specification and implementation. |
+
+### Requirement Markers
+*   **`[PROPOSED]`**: The requirement is new and not implemented yet.
+*   **`[vX.Y.Z]`**: The requirement was added in this version.
+*   **`[CHANGED vX.Y.Z]`**: The requirement was modified in this version.
+*   **`[REMOVED vX.Y.Z]`**: The requirement was dropped in this version. Its text is kept and struck through (`~~...~~`).
+*   Requirements without a marker exist since v1.0.0.
+*   Requirement IDs are never reused or renumbered.
+
+Older versions of this document are kept as git tags: `git show v1.0.0:esp32-weather-station.md`.
+
 ## 1. Introduction
 
 ### 1.1 Purpose of the Document
