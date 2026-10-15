@@ -52,7 +52,7 @@ source ~/.espressif/tools/activate_idf_v6.1.sh
 
 # 2. Set the target (first time only)
 idf.py set-target esp32
-
+# 3. Set the Wi-Fi credentials and, optionally, the measurement interval (first time only): "Weather Station" menu
 # 3. Set the Wi-Fi credentials (first time only): "Weather Station" menu
 idf.py menuconfig
 
@@ -73,7 +73,9 @@ The timestamp appears once the clock has been synchronized via NTP. The Wi-Fi cr
 
 ## Configuration
 
-All tunable parameters live in [main/config.h](main/config.h):
+The measurement interval (1 to 3600 s, default 2 s) and the Wi-Fi credentials are set with `idf.py menuconfig` in the "Weather Station" menu.
+
+All other tunable parameters live in [main/config.h](main/config.h):
 
 - I2C pins, frequency and port;
 - BME280 and SSD1306 addresses;
@@ -86,7 +88,7 @@ All tunable parameters live in [main/config.h](main/config.h):
 
 The firmware runs two FreeRTOS tasks:
 
-- **`taskMeasure`**: reads the BME280 every 2 s.
+- **`taskMeasure`**: reads the BME280 at the measurement interval (2 s by default).
 - **`taskDisplay`**: refreshes the display every 1 s, and right away when a new measurement arrives, with a measurement dot, the date and time and a Wi-Fi signal icon in the header.
 
 Wi-Fi and NTP run in the background (`net_time`) and reconnect on their own; network failures never stop the station.
@@ -101,7 +103,7 @@ main/
 ├── ssd1306.*     # SSD1306 driver with a local frame buffer
 ├── font5x7.h     # 5x7 font (ASCII + degree sign)
 ├── net_time.*    # Wi-Fi station + NTP time of day
-└── Kconfig.projbuild  # menuconfig menu for the Wi-Fi credentials
+└── Kconfig.projbuild  # menuconfig menu: measurement interval, Wi-Fi credentials
 ```
 
 The full functional specification is in [esp32-weather-station.md](esp32-weather-station.md).

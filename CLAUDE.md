@@ -21,7 +21,7 @@ The project is built with ESP-IDF (v6.1) and uses FreeRTOS to run sensor measure
 *   `main/ssd1306.h`, `main/ssd1306.cpp`: SSD1306 driver with a local frame buffer.
 *   `main/font5x7.h`: 5x7 font (ASCII plus a degree sign at `0x7F`).
 *   `main/net_time.h`, `main/net_time.cpp`: Wi-Fi station with automatic reconnection, signal level for the header icon, and NTP time sync (time of day).
-*   `main/Kconfig.projbuild`: "Weather Station" menuconfig menu for the Wi-Fi credentials.
+*   `main/Kconfig.projbuild`: "Weather Station" menuconfig menu for the measurement interval and the Wi-Fi credentials.
 *   `main/main.cpp`: `app_main`, initialization, and the FreeRTOS tasks.
 
 ## Build and Run Process
@@ -50,12 +50,12 @@ The Arduino libraries (`Wire.h`, `Adafruit_GFX.h`, `Adafruit_SSD1306.h`, `Adafru
 ## Development Conventions
 
 *   The code is written in C++; the entry point is `extern "C" void app_main(void)`.
-*   All configurable values belong in `main/config.h`; do not hard-code them elsewhere. Exception: secrets (Wi-Fi credentials) come from Kconfig and are never committed.
+*   All configurable values belong in `main/config.h`; do not hard-code them elsewhere. Exceptions come from Kconfig (`idf.py menuconfig`) and are read into `config.h`: the measurement interval, and secrets (Wi-Fi credentials), which are never committed.
 *   Use `ESP_LOGI`/`ESP_LOGW`/`ESP_LOGE` for serial output and return `esp_err_t` from driver functions.
 
 The code is divided into two main tasks:
 
-*   **`taskMeasure`:** Measures the weather data from the BME280 sensor every 2 seconds.
+*   **`taskMeasure`:** Measures the weather data from the BME280 sensor at the measurement interval (`CONFIG_WS_MEASURE_PERIOD_S`, default 2 seconds).
 *   **`taskDisplay`:** Updates the OLED display with the current weather data every 1 second. `taskMeasure` also wakes it with a task notification on each new measurement, so the measurement icon appears immediately and is cleared after `MEASURE_ICON_MS`.
 
 The two tasks are synchronized via a mutex (`i2cMutex`) to control access to the I2C bus. A second mutex (`dataMutex`) protects the shared measurement data.

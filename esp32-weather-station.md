@@ -1,6 +1,6 @@
 # Functional Specification: ESP32 Weather Station
 
-**Version:** 1.3.0
+**Version:** 1.4.0
 
 ## Document Control
 
@@ -12,6 +12,7 @@
 | 1.1.0   | 2026-10-15 | Time of day via Wi-Fi + NTP (FR-5.1 to FR-5.6). |
 | 1.2.0   | 2026-10-15 | Wi-Fi signal icon in the OLED header (FR-5.7). |
 | 1.3.0   | 2026-10-15 | Measurement icon in the OLED header (FR-2.6). |
+| 1.4.0   | 2026-10-15 | Measurement interval set via menuconfig (FR-3.2, FR-1.4 changed). |
 
 ### Requirement Markers
 *   **`[PROPOSED]`**: The requirement is new and not implemented yet.
@@ -48,7 +49,7 @@ The main goal is to provide a weather station that is easy to build and use, del
 *   **FR-1.1:** The system MUST acquire temperature readings from the BME280 sensor.
 *   **FR-1.2:** The system MUST acquire humidity readings from the BME280 sensor.
 *   **FR-1.3:** The system MUST acquire air pressure readings from the BME280 sensor.
-*   **FR-1.4:** The sensor data MUST be updated at least every 2 seconds.
+*   **FR-1.4:** [CHANGED v1.4.0] The sensor data MUST be updated at the measurement interval set in sdkconfig (FR-3.2), 2 seconds by default. Before v1.4.0: "at least every 2 seconds".
 *   **FR-1.5:** The system MUST provide a means to safely synchronize access to the I2C bus between different tasks (FreeRTOS mutex `i2cMutex`).
 
 ### 3.2 Data Display on OLED
@@ -61,7 +62,7 @@ The main goal is to provide a weather station that is easy to build and use, del
 
 ### 3.3 Configuration
 *   **FR-3.1:** Configuration parameters such as display dimensions, I2C pins and addresses of the sensors and displays, and sea-level pressure MUST be defined centrally in a dedicated header file (`main/config.h`).
-*   **FR-3.2:** [PROPOSED] Measurement interval time MUST be done in sdkconfig.
+*   **FR-3.2:** [v1.4.0] Measurement interval time MUST be done in sdkconfig. It is set via `idf.py menuconfig` ("Weather Station" menu, `CONFIG_WS_MEASURE_PERIOD_S`), in seconds, from 1 to 3600, default 2; `main/config.h` takes the value from there.
 
 ### 3.4 Error Handling
 *   **FR-4.1:** The system MUST output an error message on the serial console (via `ESP_LOGE`) if the OLED display cannot be initialized.
@@ -122,7 +123,7 @@ The main goal is to provide a weather station that is easy to build and use, del
     *   `font5x7.h` (5x7 font for text output, including a degree sign)
     *   `net_time.h` / `net_time.cpp` (Wi-Fi connection with automatic reconnection and signal level, and NTP time synchronization)
     *   `config.h` (central configuration)
-    *   `Kconfig.projbuild` ("Weather Station" menu in `idf.py menuconfig` for the Wi-Fi credentials)
+    *   `Kconfig.projbuild` ("Weather Station" menu in `idf.py menuconfig` for the measurement interval and the Wi-Fi credentials)
     *   `main.cpp` (initialization and the FreeRTOS tasks `taskMeasure` and `taskDisplay`)
 
 ## 6. Interfaces

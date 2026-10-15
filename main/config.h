@@ -67,7 +67,8 @@ constexpr uint32_t   ERROR_BLINK_PERIOD_MS   = 250;
 // ---------------------------------------------------------------------------
 // Tasks
 // ---------------------------------------------------------------------------
-constexpr uint32_t    MEASURE_PERIOD_MS   = 2000;  // FR-1.4: at least every 2 s
+// FR-1.4, FR-3.2: set via `idf.py menuconfig` -> "Weather Station" (default 2 s)
+constexpr uint32_t    MEASURE_PERIOD_MS   = CONFIG_WS_MEASURE_PERIOD_S * 1000;
 constexpr uint32_t    DISPLAY_PERIOD_MS   = 1000;  // FR-2.4: at least every 1 s
 constexpr uint32_t    MEASURE_ICON_MS     = 500;   // FR-2.6: measurement icon duration
 

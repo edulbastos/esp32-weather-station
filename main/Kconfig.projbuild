@@ -1,5 +1,12 @@
 menu "Weather Station"
 
+    config WS_MEASURE_PERIOD_S
+        int "Measurement interval (seconds)"
+        range 1 3600
+        default 2
+        help
+            How often the BME280 is read (FR-1.4, FR-3.2).
+
     config WS_WIFI_SSID
         string "Wi-Fi SSID"
         default ""
