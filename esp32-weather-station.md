@@ -1,6 +1,6 @@
 # Functional Specification: ESP32 Weather Station
 
-**Version:** 1.2.0
+**Version:** 1.3.0
 
 ## Document Control
 
@@ -11,6 +11,7 @@
 | 1.0.0   | 2026-10-15 | Initial specification and implementation. |
 | 1.1.0   | 2026-10-15 | Time of day via Wi-Fi + NTP (FR-5.1 to FR-5.6). |
 | 1.2.0   | 2026-10-15 | Wi-Fi signal icon in the OLED header (FR-5.7). |
+| 1.3.0   | 2026-10-15 | Measurement icon in the OLED header (FR-2.6). |
 
 ### Requirement Markers
 *   **`[PROPOSED]`**: The requirement is new and not implemented yet.
@@ -56,9 +57,11 @@ The main goal is to provide a weather station that is easy to build and use, del
 *   **FR-2.3:** The system MUST display the current air pressure on the SSD1306 OLED display.
 *   **FR-2.4:** The OLED display MUST be refreshed at least once every second.
 *   **FR-2.5:** The displayed values MUST be clearly legible and include the corresponding units (e.g. °C, %RH, hPa).
+*   **FR-2.6:** [v1.3.0] The system MUST display an icon to indicate when a measurement arrives and disappear after 0.5s. The icon is a filled dot at the left edge of the OLED header; the display is redrawn as soon as a new measurement arrives. The duration is set in `main/config.h`.
 
 ### 3.3 Configuration
 *   **FR-3.1:** Configuration parameters such as display dimensions, I2C pins and addresses of the sensors and displays, and sea-level pressure MUST be defined centrally in a dedicated header file (`main/config.h`).
+*   **FR-3.2:** [PROPOSED] Measurement interval time MUST be done in sdkconfig.
 
 ### 3.4 Error Handling
 *   **FR-4.1:** The system MUST output an error message on the serial console (via `ESP_LOGE`) if the OLED display cannot be initialized.
@@ -128,6 +131,7 @@ The main goal is to provide a weather station that is easy to build and use, del
 *   Display of temperature, humidity, and air pressure.
 *   Date and time in the header once the clock is synchronized.
 *   Wi-Fi signal icon at the right edge of the header.
+*   Measurement icon (filled dot) at the left edge of the header, shown for 0.5 s after each measurement.
 
 ### 6.2 Hardware Interfaces
 *   **I2C bus:** Uses GPIO 21 (SDA) and GPIO 22 (SCL) of the ESP32.

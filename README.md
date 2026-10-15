@@ -8,7 +8,7 @@ What the OLED display shows (128x64):
 
 ```
 +--------------------------------+
-|   15/10/2026 14:32        ((o  |  <- yellow band: date/time + Wi-Fi icon
+| *   15/10/2026 14:32      ((o  |  <- yellow band: measurement dot, date/time, Wi-Fi icon
 +--------------------------------+
 | TEMP              23.4  oC     |
 | HUM               56.1  %RH    |
@@ -16,7 +16,7 @@ What the OLED display shows (128x64):
 +--------------------------------+
 ```
 
-The Wi-Fi icon shows 1 to 3 arcs according to the signal strength and an X while disconnected. Before the clock is synchronized, the header shows "WEATHER STATION".
+The dot at the left lights up for 0.5 s each time a new measurement arrives. The Wi-Fi icon shows 1 to 3 arcs according to the signal strength and an X while disconnected. Before the clock is synchronized, the header shows "WEATHER STATION".
 
 ## Hardware
 
@@ -87,7 +87,7 @@ All tunable parameters live in [main/config.h](main/config.h):
 The firmware runs two FreeRTOS tasks:
 
 - **`taskMeasure`**: reads the BME280 every 2 s.
-- **`taskDisplay`**: refreshes the display every 1 s, with the date and time and a Wi-Fi signal icon in the header.
+- **`taskDisplay`**: refreshes the display every 1 s, and right away when a new measurement arrives, with a measurement dot, the date and time and a Wi-Fi signal icon in the header.
 
 Wi-Fi and NTP run in the background (`net_time`) and reconnect on their own; network failures never stop the station.
 

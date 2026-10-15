@@ -56,7 +56,7 @@ The Arduino libraries (`Wire.h`, `Adafruit_GFX.h`, `Adafruit_SSD1306.h`, `Adafru
 The code is divided into two main tasks:
 
 *   **`taskMeasure`:** Measures the weather data from the BME280 sensor every 2 seconds.
-*   **`taskDisplay`:** Updates the OLED display with the current weather data every 1 second.
+*   **`taskDisplay`:** Updates the OLED display with the current weather data every 1 second. `taskMeasure` also wakes it with a task notification on each new measurement, so the measurement icon appears immediately and is cleared after `MEASURE_ICON_MS`.
 
 The two tasks are synchronized via a mutex (`i2cMutex`) to control access to the I2C bus. A second mutex (`dataMutex`) protects the shared measurement data.
 

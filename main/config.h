@@ -69,6 +69,7 @@ constexpr uint32_t   ERROR_BLINK_PERIOD_MS   = 250;
 // ---------------------------------------------------------------------------
 constexpr uint32_t    MEASURE_PERIOD_MS   = 2000;  // FR-1.4: at least every 2 s
 constexpr uint32_t    DISPLAY_PERIOD_MS   = 1000;  // FR-2.4: at least every 1 s
+constexpr uint32_t    MEASURE_ICON_MS     = 500;   // FR-2.6: measurement icon duration
 
 constexpr uint32_t    MEASURE_TASK_STACK  = 4096;
 constexpr uint32_t    DISPLAY_TASK_STACK  = 4096;

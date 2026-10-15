@@ -28,6 +28,7 @@ namespace {
 struct SharedData {
     Bme280Data values;
     bool valid;  // false until the first successful read or after sensor loss
+    TickType_t sample_tick;  // when the last successful read arrived (FR-2.6)
 };
 
 i2c_master_bus_handle_t s_bus = nullptr;
@@ -37,6 +38,7 @@ Ssd1306 s_display;
 SemaphoreHandle_t s_i2c_mutex = nullptr;   // i2cMutex
 SemaphoreHandle_t s_data_mutex = nullptr;  // dataMutex
 SharedData s_data = {};
+TaskHandle_t s_display_task = nullptr;     // woken by taskMeasure on new data
 
 constexpr TickType_t mutex_timeout() { return pdMS_TO_TICKS(config::MUTEX_TIMEOUT_MS); }
 
@@ -143,7 +145,29 @@ void draw_wifi_icon(int x, int y, int level)
     }
 }
 
-void render_screen(const SharedData &data)
+// FR-2.6: measurement icon, a 5x5 filled dot.
+constexpr int MEASURE_ICON_W = 5;
+constexpr int MEASURE_ICON_H = 5;
+constexpr const char *MEASURE_ICON[MEASURE_ICON_H] = {
+    ".XXX.",
+    "XXXXX",
+    "XXXXX",
+    "XXXXX",
+    ".XXX.",
+};
+
+void draw_measure_icon(int x, int y)
+{
+    for (int row = 0; row < MEASURE_ICON_H; row++) {
+        for (int col = 0; col < MEASURE_ICON_W; col++) {
+            if (MEASURE_ICON[row][col] != '.') {
+                s_display.draw_pixel(x + col, y + row);
+            }
+        }
+    }
+}
+
+void render_screen(const SharedData &data, bool measure_icon)
 {
     // 128x64: header in the top (yellow) band + three rows at scale 2 in the
     // remaining area. 128x32: three rows at scale 1, no header.
@@ -178,15 +202,22 @@ void render_screen(const SharedData &data)
     s_display.clear();
     if (TALL) {
         const char *title = !data.valid ? "SENSOR ERROR" : has_time ? clock_text : "WEATHER STATION";
-        // Wi-Fi icon at the right edge; the title is centered in the space left of it.
+        // Measurement icon at the left edge, Wi-Fi icon at the right edge; the
+        // title is centered between them. The left slot is always reserved so
+        // the title does not move when the measurement icon blinks.
+        if (measure_icon) {
+            draw_measure_icon(0, (HEADER_H - MEASURE_ICON_H) / 2);
+        }
+        const int title_left = MEASURE_ICON_W + 2;
+        int title_right = Ssd1306::WIDTH;
         const int wifi = net_time::wifi_level();
-        int title_area = Ssd1306::WIDTH;
         if (wifi >= 0) {
             draw_wifi_icon(Ssd1306::WIDTH - WIFI_ICON_W, (HEADER_H - WIFI_ICON_H) / 2, wifi);
-            title_area -= WIFI_ICON_W + 2;
+            title_right -= WIFI_ICON_W + 2;
         }
         // Title vertically centered in the header band.
-        s_display.draw_string((title_area - Ssd1306::text_width(title)) / 2, (HEADER_H - 7) / 2, title);
+        s_display.draw_string(title_left + (title_right - title_left - Ssd1306::text_width(title)) / 2,
+                              (HEADER_H - 7) / 2, title);
         if (config::DISPLAY_YELLOW_ROWS == 0) {
             s_display.draw_hline(0, HEADER_H - 2, Ssd1306::WIDTH);  // two-color panels need no separator
         }
@@ -239,10 +270,16 @@ void taskMeasure(void *)
             if (err == ESP_OK) {
                 s_data.values = sample;
                 s_data.valid = true;
+                s_data.sample_tick = xTaskGetTickCount();
             } else if (errors >= config::MAX_CONSECUTIVE_ERRORS) {
                 s_data.valid = false;  // stop showing stale values
             }
             xSemaphoreGive(s_data_mutex);
+        }
+
+        // FR-2.6: redraw right away so the measurement icon appears on time.
+        if (err == ESP_OK && s_display_task != nullptr) {
+            xTaskNotifyGive(s_display_task);
         }
 
         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(config::MEASURE_PERIOD_MS));
@@ -252,7 +289,9 @@ void taskMeasure(void *)
 void taskDisplay(void *)
 {
     int errors = 0;
-    TickType_t last_wake = xTaskGetTickCount();
+    const TickType_t period = pdMS_TO_TICKS(config::DISPLAY_PERIOD_MS);
+    const TickType_t icon_time = pdMS_TO_TICKS(config::MEASURE_ICON_MS);
+    TickType_t next_refresh = xTaskGetTickCount();
 
     while (true) {
         SharedData snapshot = {};
@@ -261,8 +300,13 @@ void taskDisplay(void *)
             xSemaphoreGive(s_data_mutex);
         }
 
+        // FR-2.6: the icon stays on for icon_time after each new measurement.
+        const TickType_t now = xTaskGetTickCount();
+        const TickType_t icon_age = now - snapshot.sample_tick;
+        const bool measure_icon = snapshot.valid && icon_age < icon_time;
+
         // Rendering only touches the local frame buffer, no bus access needed.
-        render_screen(snapshot);
+        render_screen(snapshot, measure_icon);
 
         esp_err_t err = ESP_ERR_TIMEOUT;
         if (xSemaphoreTake(s_i2c_mutex, mutex_timeout()) == pdTRUE) {
@@ -271,7 +315,7 @@ void taskDisplay(void *)
             if (err != ESP_OK && errors + 1 >= config::MAX_CONSECUTIVE_ERRORS) {
                 ESP_LOGW(TAG, "Re-initializing SSD1306");
                 if (s_display.init(s_bus, config::SSD1306_ADDR, config::I2C_FREQ_HZ) == ESP_OK) {
-                    render_screen(snapshot);  // init() cleared the frame buffer
+                    render_screen(snapshot, measure_icon);  // init() cleared the frame buffer
                     err = s_display.flush();
                 }
             }
@@ -287,7 +331,17 @@ void taskDisplay(void *)
             ESP_LOGW(TAG, "Display update failed (%d in a row): %s", errors, esp_err_to_name(err));
         }
 
-        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(config::DISPLAY_PERIOD_MS));
+        // Sleep until the next periodic refresh (FR-2.4), until the icon has to
+        // be cleared, or until taskMeasure signals new data, whichever is first.
+        const TickType_t after = xTaskGetTickCount();
+        if (static_cast<int32_t>(after - next_refresh) >= 0) {
+            next_refresh = after + period;
+        }
+        TickType_t wait = next_refresh - after;
+        if (measure_icon && icon_time - icon_age < wait) {
+            wait = icon_time - icon_age;
+        }
+        ulTaskNotifyTake(pdTRUE, wait);
     }
 }
 
@@ -335,7 +389,7 @@ extern "C" void app_main(void)
     if (xTaskCreate(taskMeasure, "taskMeasure", config::MEASURE_TASK_STACK, nullptr,
                     config::MEASURE_TASK_PRIO, nullptr) != pdPASS ||
         xTaskCreate(taskDisplay, "taskDisplay", config::DISPLAY_TASK_STACK, nullptr,
-                    config::DISPLAY_TASK_PRIO, nullptr) != pdPASS) {
+                    config::DISPLAY_TASK_PRIO, &s_display_task) != pdPASS) {
         enter_error_mode("Task creation failed", true);
     }
 
