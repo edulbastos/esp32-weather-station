@@ -6,6 +6,8 @@
 //   taskDisplay - redraws the OLED every DISPLAY_PERIOD_MS
 //   taskPublish - sends the latest measurement via MQTT every MQTT_PUBLISH_PERIOD_MS
 //   taskLog     - stores the latest measurement in the flash history every LOG_PERIOD_MS
+// A web server (web_server) shows the current values and the history on the
+// local network.
 // i2cMutex serializes access to the shared I2C bus, dataMutex protects the
 // latest measurement shared between the tasks.
 // Wi-Fi and NTP (net_time) run in the background and provide the time of day;
@@ -27,6 +29,7 @@
 #include "net_time.h"
 #include "ssd1306.h"
 #include "telemetry.h"
+#include "web_server.h"
 
 static const char *TAG = "weather";
 
@@ -425,6 +428,20 @@ void taskLog(void *)
     }
 }
 
+// FR-8.3: latest measurement for the web page.
+bool current_for_web(web_server::Current &out)
+{
+    if (xSemaphoreTake(s_data_mutex, mutex_timeout()) != pdTRUE) {
+        return false;
+    }
+    out.valid = s_data.valid;
+    out.values = s_data.values;
+    out.time = s_data.sample_time;
+    out.age_ms = pdTICKS_TO_MS(xTaskGetTickCount() - s_data.sample_tick);
+    xSemaphoreGive(s_data_mutex);
+    return true;
+}
+
 // FR-7.4: serial console with `help` and `log`, shown in `idf.py monitor`.
 esp_err_t start_console(bool with_history)
 {
@@ -504,6 +521,12 @@ extern "C" void app_main(void)
 
     // FR-6.1, FR-6.5: MQTT needs Wi-Fi; its failures are not critical either.
     if (err == ESP_OK) {
+        // FR-8.1, FR-8.6: the web page needs Wi-Fi too and is not critical.
+        const esp_err_t web_err = web_server::start(current_for_web);
+        if (web_err != ESP_OK) {
+            ESP_LOGW(TAG, "Web page unavailable: %s", esp_err_to_name(web_err));
+        }
+
         err = telemetry::start();
         if (err == ESP_OK) {
             if (xTaskCreate(taskPublish, "taskPublish", config::PUBLISH_TASK_STACK, nullptr,

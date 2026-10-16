@@ -24,6 +24,8 @@ The project is built with ESP-IDF (v6.1) and uses FreeRTOS to run sensor measure
 *   `main/net_time.h`, `main/net_time.cpp`: Wi-Fi station with automatic reconnection, signal level for the header icon, and NTP time sync (time of day).
 *   `main/telemetry.h`, `main/telemetry.cpp`: MQTT client (connects once Wi-Fi has an IP, reconnects on its own) and the JSON payload.
 *   `main/history.h`, `main/history.cpp`: Measurement history as a ring buffer of 16-byte records with CRC16 on the `history` partition, and the `log` console command (`info`, `dump [N]`, `clear`).
+*   `main/web_server.h`, `main/web_server.cpp`: HTTP server (`esp_http_server`) started on the first IP address: `/`, `/api/current`, `/api/history?hours=N`, `/history.csv`. Large answers are sent in chunks.
+*   `main/web_page.html`: The web page (HTML, CSS and JavaScript in one file, no external resources), embedded in the firmware with `EMBED_FILES`.
 *   `main/idf_component.yml`: external component `espressif/mqtt` from the ESP Component Registry (downloaded into `managed_components/`, not committed).
 *   `main/Kconfig.projbuild`: "Weather Station" menuconfig menu for the measurement interval, the Wi-Fi credentials, the MQTT broker and publish interval, and the history log interval.
 *   `main/main.cpp`: `app_main`, initialization, and the FreeRTOS tasks.
@@ -37,7 +39,7 @@ The only external component is `espressif/mqtt` (ESP-MQTT), which is no longer p
 *   `esp_driver_i2c` (`driver/i2c_master.h`): I2C master driver
 *   `esp_driver_gpio`
 *   `esp_wifi`, `esp_netif` (including SNTP), `esp_event`, `lwip`, `nvs_flash`
-*   `esp_partition` (history partition), `console` (serial console)
+*   `esp_partition` (history partition), `console` (serial console), `esp_http_server` (web page)
 *   FreeRTOS (part of ESP-IDF)
 
 In VS Code, keep the ESP-IDF extension setting `idf.enableUpdateSrcsToCMakeListsFile` off: when on, it inserts every new source file into the nearest `CMakeLists.txt`, including those of `managed_components/`, and breaks the build.
@@ -66,6 +68,8 @@ The code is divided into four tasks:
 *   **`taskDisplay`:** Updates the OLED display with the current weather data every 1 second. `taskMeasure` also wakes it with a task notification on each new measurement, so the measurement icon appears immediately and is cleared after `MEASURE_ICON_MS`.
 *   **`taskPublish`:** Sends the latest valid measurement to the MQTT broker at the publish interval (`CONFIG_WS_MQTT_PUBLISH_PERIOD_S`, default 60 seconds). Created only when Wi-Fi and a broker URI are configured.
 *   **`taskLog`:** Stores the latest valid measurement in the flash history at the log interval (`CONFIG_WS_LOG_PERIOD_S`, default 60 seconds).
+
+The HTTP server runs in its own ESP-IDF task and reads the current data through `current_for_web()` in `main.cpp` (under `dataMutex`) and the history through `history::visit()`.
 
 The ESP-IDF console REPL runs on the serial port (prompt `weather> `) with the `help` and `log` commands; `log dump` silences other log output while it prints.
 

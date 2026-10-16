@@ -1,0 +1,244 @@
+#include "web_server.h"
+
+#include <algorithm>
+#include <atomic>
+#include <cstdarg>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include "config.h"
+#include "esp_event.h"
+#include "esp_http_server.h"
+#include "esp_log.h"
+#include "esp_netif.h"
+#include "history.h"
+#include "net_time.h"
+
+static const char *TAG = "web";
+
+// web_page.html, embedded by main/CMakeLists.txt (EMBED_FILES)
+extern const char web_page_start[] asm("_binary_web_page_html_start");
+extern const char web_page_end[] asm("_binary_web_page_html_end");
+
+namespace {
+
+web_server::CurrentFn s_current = nullptr;
+httpd_handle_t s_server = nullptr;
+std::atomic<bool> s_starting{false};
+
+// Collects the response in a small buffer and sends it in chunks, so large
+// answers (the whole history) never have to fit in RAM.
+class ChunkWriter {
+public:
+    explicit ChunkWriter(httpd_req_t *req) : req_(req) {}
+
+    bool write(const char *data, size_t len)
+    {
+        while (ok_ && len > 0) {
+            const size_t n = std::min(len, sizeof(buf_) - used_);
+            memcpy(buf_ + used_, data, n);
+            used_ += n;
+            data += n;
+            len -= n;
+            if (used_ == sizeof(buf_)) {
+                flush();
+            }
+        }
+        return ok_;
+    }
+
+    [[gnu::format(printf, 2, 3)]] bool print(const char *fmt, ...)
+    {
+        char line[96];
+        va_list args;
+        va_start(args, fmt);
+        const int n = vsnprintf(line, sizeof(line), fmt, args);
+        va_end(args);
+        return n > 0 && write(line, std::min<size_t>(n, sizeof(line) - 1));
+    }
+
+    // Sends what is left and ends the chunked response.
+    esp_err_t finish()
+    {
+        flush();
+        if (ok_) {
+            ok_ = httpd_resp_send_chunk(req_, nullptr, 0) == ESP_OK;
+        }
+        return ok_ ? ESP_OK : ESP_FAIL;
+    }
+
+private:
+    void flush()
+    {
+        if (ok_ && used_ > 0) {
+            // A failure means the client went away; stop producing data.
+            ok_ = httpd_resp_send_chunk(req_, buf_, used_) == ESP_OK;
+        }
+        used_ = 0;
+    }
+
+    httpd_req_t *req_;
+    char buf_[1024];
+    size_t used_ = 0;
+    bool ok_ = true;
+};
+
+esp_err_t handle_page(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    return httpd_resp_send(req, web_page_start, web_page_end - web_page_start);
+}
+
+// FR-8.3: current values as JSON.
+esp_err_t handle_current(httpd_req_t *req)
+{
+    web_server::Current cur = {};
+    if (!s_current(cur)) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Data busy, try again");
+    }
+
+    char json[320];
+    char time_field[24] = "null";
+    if (cur.time != 0) {
+        snprintf(time_field, sizeof(time_field), "%lld", static_cast<long long>(cur.time));
+    }
+    if (cur.valid) {
+        snprintf(json, sizeof(json),
+                 "{\"valid\":true,\"time\":%s,\"age_s\":%.1f,\"temperature_c\":%.2f,"
+                 "\"humidity_rh\":%.2f,\"pressure_hpa\":%.2f,\"wifi_level\":%d,"
+                 "\"measure_period_s\":%lu,\"log_period_s\":%lu}",
+                 time_field, cur.age_ms / 1000.0, cur.values.temperature_c, cur.values.humidity_rh,
+                 cur.values.pressure_hpa, net_time::wifi_level(),
+                 static_cast<unsigned long>(config::MEASURE_PERIOD_MS / 1000),
+                 static_cast<unsigned long>(config::LOG_PERIOD_MS / 1000));
+    } else {
+        snprintf(json, sizeof(json),
+                 "{\"valid\":false,\"wifi_level\":%d,\"measure_period_s\":%lu,\"log_period_s\":%lu}",
+                 net_time::wifi_level(), static_cast<unsigned long>(config::MEASURE_PERIOD_MS / 1000),
+                 static_cast<unsigned long>(config::LOG_PERIOD_MS / 1000));
+    }
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    return httpd_resp_sendstr(req, json);
+}
+
+// FR-8.4: records of the last `hours` hours as JSON, at most WEB_HISTORY_MAX_POINTS.
+esp_err_t handle_history(httpd_req_t *req)
+{
+    uint32_t hours = config::WEB_HISTORY_HOURS;
+    char query[32], value[12];
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK &&
+        httpd_query_key_value(query, "hours", value, sizeof(value)) == ESP_OK) {
+        hours = std::clamp<uint32_t>(strtoul(value, nullptr, 10), 1, config::WEB_HISTORY_MAX_HOURS);
+    }
+
+    // Records that can fall in the window at the current log interval, and
+    // every step-th of them so the answer stays small.
+    const uint64_t window_records = static_cast<uint64_t>(hours) * 3600 * 1000 / config::LOG_PERIOD_MS + 1;
+    const uint32_t last_n = static_cast<uint32_t>(std::min<uint64_t>(window_records, UINT32_MAX));
+    const uint32_t step = (last_n + config::WEB_HISTORY_MAX_POINTS - 1) / config::WEB_HISTORY_MAX_POINTS;
+
+    // Records without a time cannot be placed on the chart; with the clock
+    // synchronized, only the requested window is sent.
+    struct tm now_tm;
+    const time_t cutoff = net_time::local_time(now_tm) ? time(nullptr) - static_cast<time_t>(hours) * 3600 : 1;
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    ChunkWriter out(req);
+    out.print("{\"hours\":%lu,\"log_period_s\":%lu,\"records\":[", static_cast<unsigned long>(hours),
+               static_cast<unsigned long>(config::LOG_PERIOD_MS / 1000));
+    uint32_t index = 0;
+    bool first = true;
+    const esp_err_t err = history::visit(last_n, [&](const history::Entry &e) {
+        if (index++ % step != 0 || e.time < cutoff) {
+            return true;
+        }
+        const bool ok = out.print("%s[%lld,%.2f,%.2f,%.1f]", first ? "" : ",", static_cast<long long>(e.time),
+                                   e.temperature_c, e.humidity_rh, e.pressure_hpa);
+        first = false;
+        return ok;
+    });
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+        ESP_LOGW(TAG, "History read failed: %s", esp_err_to_name(err));
+    }
+    out.print("],\"available\":%s}", err == ESP_ERR_INVALID_STATE ? "false" : "true");
+    return out.finish();
+}
+
+// FR-8.5: the whole history as a CSV download.
+esp_err_t handle_csv(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "text/csv");
+    httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=\"weather-history.csv\"");
+    ChunkWriter out(req);
+    out.write(history::CSV_HEADER, strlen(history::CSV_HEADER));
+    const esp_err_t err = history::visit(0, [&out](const history::Entry &e) {
+        char line[80];
+        const int n = history::format_csv(e, line, sizeof(line));
+        return n > 0 && out.write(line, std::min<size_t>(n, sizeof(line) - 1));
+    });
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "History read failed: %s", esp_err_to_name(err));
+    }
+    return out.finish();
+}
+
+esp_err_t start_server()
+{
+    httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
+    cfg.server_port = config::WEB_SERVER_PORT;
+    cfg.stack_size = config::WEB_TASK_STACK;
+    cfg.task_priority = config::WEB_TASK_PRIO;
+    cfg.max_open_sockets = config::WEB_MAX_CLIENTS;
+    cfg.lru_purge_enable = true;  // a new client closes the least recently used connection
+
+    esp_err_t err = httpd_start(&s_server, &cfg);
+    if (err != ESP_OK) {
+        return err;
+    }
+    const httpd_uri_t handlers[] = {
+        {.uri = "/", .method = HTTP_GET, .handler = handle_page, .user_ctx = nullptr},
+        {.uri = "/api/current", .method = HTTP_GET, .handler = handle_current, .user_ctx = nullptr},
+        {.uri = "/api/history", .method = HTTP_GET, .handler = handle_history, .user_ctx = nullptr},
+        {.uri = "/history.csv", .method = HTTP_GET, .handler = handle_csv, .user_ctx = nullptr},
+    };
+    for (const auto &h : handlers) {
+        if ((err = httpd_register_uri_handler(s_server, &h)) != ESP_OK) {
+            return err;
+        }
+    }
+    return ESP_OK;
+}
+
+// FR-8.1: the server starts with the first IP address; the URL is logged on
+// every (re)connection, since the address can change.
+void on_got_ip(void *, esp_event_base_t, int32_t, void *data)
+{
+    if (s_server == nullptr && !s_starting.exchange(true)) {
+        const esp_err_t err = start_server();
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "Web server start failed: %s", esp_err_to_name(err));
+            if (s_server != nullptr) {
+                httpd_stop(s_server);
+                s_server = nullptr;
+            }
+            s_starting = false;
+            return;
+        }
+    }
+    const auto *info = static_cast<ip_event_got_ip_t *>(data);
+    ESP_LOGI(TAG, "Web page at http://" IPSTR "/", IP2STR(&info->ip_info.ip));
+}
+
+}  // namespace
+
+namespace web_server {
+
+esp_err_t start(CurrentFn current)
+{
+    s_current = current;
+    return esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, on_got_ip, nullptr);
+}
+
+}  // namespace web_server

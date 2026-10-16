@@ -140,16 +140,10 @@ esp_err_t scan()
     return ESP_OK;
 }
 
-void format_time(uint32_t t, char *out, size_t len)
+history::Entry to_entry(const Record &r)
 {
-    if (t == 0) {
-        out[0] = '\0';
-        return;
-    }
-    const time_t tt = t;
-    struct tm local;
-    localtime_r(&tt, &local);
-    strftime(out, len, "%Y-%m-%d %H:%M:%S", &local);
+    return history::Entry{r.seq, static_cast<time_t>(r.time), r.temp_centi / 100.0f, r.hum_centi / 100.0f,
+                 r.press_deci / 10.0f};
 }
 
 void cmd_info()
@@ -169,61 +163,27 @@ void cmd_info()
            static_cast<unsigned long>(next_seq - 1));
 }
 
-// FR-7.4: prints the oldest-to-newest records as CSV. Each sector is copied
-// under the lock and printed without it, so logging continues meanwhile;
-// records outside the range taken at the start are skipped.
+// FR-7.4: prints the oldest-to-newest records as CSV.
 void cmd_dump(uint32_t last_n)
 {
-    std::unique_ptr<Record[]> buf(new (std::nothrow) Record[RECORDS_PER_SECTOR]);
-    if (!buf) {
-        printf("Out of memory\n");
-        return;
-    }
-
-    size_t head;
-    uint32_t newest, count;
-    {
-        Lock lock(portMAX_DELAY);
-        head = s_head;
-        newest = s_next_seq - 1;
-        count = s_count;
-    }
-    if (last_n == 0 || last_n > count) {
-        last_n = count;
-    }
-    const uint32_t first_seq = newest - last_n + 1;
-
     // Other log output would end up in the middle of the CSV.
     const esp_log_level_t level = esp_log_level_get("*");
     esp_log_level_set("*", ESP_LOG_NONE);
 
-    printf("seq,time,temperature_c,humidity_rh,pressure_hpa\n");
-    uint32_t printed = 0, last_seq = first_seq - 1;
-    for (size_t i = 1; i <= s_sectors && last_n > 0; i++) {
-        const size_t sector = (head + i) % s_sectors;  // oldest sector first
-        esp_err_t err;
-        {
-            Lock lock(portMAX_DELAY);
-            err = read_sector(sector, buf.get());
-        }
-        if (err != ESP_OK) {
-            continue;
-        }
-        for (size_t j = 0; j < RECORDS_PER_SECTOR; j++) {
-            const Record &r = buf[j];
-            if (!is_valid(r) || r.seq <= last_seq || r.seq > newest) {
-                continue;
-            }
-            char stamp[24];
-            format_time(r.time, stamp, sizeof(stamp));
-            printf("%lu,%s,%.2f,%.2f,%.1f\n", static_cast<unsigned long>(r.seq), stamp,
-                   r.temp_centi / 100.0, r.hum_centi / 100.0, r.press_deci / 10.0);
-            last_seq = r.seq;
-            printed++;
-        }
-    }
+    printf("%s", history::CSV_HEADER);
+    uint32_t printed = 0;
+    const esp_err_t err = history::visit(last_n, [&printed](const history::Entry &e) {
+        char line[80];
+        history::format_csv(e, line, sizeof(line));
+        fputs(line, stdout);
+        printed++;
+        return true;
+    });
     fflush(stdout);
     esp_log_level_set("*", level);
+    if (err != ESP_OK) {
+        printf("# error: %s\n", esp_err_to_name(err));
+    }
     printf("# %lu records\n", static_cast<unsigned long>(printed));
 }
 
@@ -276,6 +236,8 @@ int cmd_log(int argc, char **argv)
 }  // namespace
 
 namespace history {
+
+const char *const CSV_HEADER = "seq,time,temperature_c,humidity_rh,pressure_hpa\n";
 
 esp_err_t init()
 {
@@ -343,6 +305,77 @@ esp_err_t append(const Bme280Data &data, time_t sample_time)
         s_count++;
     }
     return err;
+}
+
+esp_err_t visit(uint32_t last_n, const Visitor &fn)
+{
+    if (s_part == nullptr || s_lock == nullptr) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    std::unique_ptr<Record[]> buf(new (std::nothrow) Record[RECORDS_PER_SECTOR]);
+    if (!buf) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    size_t head;
+    uint32_t newest, count;
+    {
+        Lock lock(portMAX_DELAY);
+        head = s_head;
+        newest = s_next_seq - 1;
+        count = s_count;
+    }
+    if (last_n == 0 || last_n > count) {
+        last_n = count;
+    }
+    if (last_n == 0) {
+        return ESP_OK;
+    }
+    // Records outside [first_seq, newest] were written or overwritten after
+    // the start of the iteration and are skipped.
+    const uint32_t first_seq = newest - last_n + 1;
+    uint32_t last_seq = first_seq - 1;
+
+    for (size_t i = 1; i <= s_sectors; i++) {
+        const size_t sector = (head + i) % s_sectors;  // oldest sector first
+        esp_err_t err;
+        {
+            Lock lock(portMAX_DELAY);
+            // Sectors that end before first_seq are skipped without reading them.
+            Record last;
+            err = read_record(sector, RECORDS_PER_SECTOR - 1, last);
+            if (err == ESP_OK && is_valid(last) && last.seq < first_seq) {
+                continue;
+            }
+            err = read_sector(sector, buf.get());
+        }
+        if (err != ESP_OK) {
+            continue;
+        }
+        for (size_t j = 0; j < RECORDS_PER_SECTOR; j++) {
+            const Record &r = buf[j];
+            if (!is_valid(r) || r.seq <= last_seq || r.seq > newest) {
+                continue;
+            }
+            last_seq = r.seq;
+            if (!fn(to_entry(r))) {
+                return ESP_OK;
+            }
+        }
+    }
+    return ESP_OK;
+}
+
+int format_csv(const Entry &e, char *buf, size_t len)
+{
+    char stamp[24] = "";  // local time, empty if unknown
+    if (e.time != 0) {
+        struct tm local;
+        localtime_r(&e.time, &local);
+        strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", &local);
+    }
+    return snprintf(buf, len, "%lu,%s,%.2f,%.2f,%.1f\n", static_cast<unsigned long>(e.seq), stamp,
+                    e.temperature_c, e.humidity_rh, e.pressure_hpa);
 }
 
 esp_err_t register_console_command()

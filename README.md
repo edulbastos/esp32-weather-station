@@ -1,6 +1,6 @@
 # ESP32 Weather Station
 
-An ESP32 weather station that reads **temperature**, **humidity** and **air pressure** from a BME280 sensor and shows the values in real time on the 0.96" SSD1306 OLED display built into the ideaspark ESP32 development board. The date and time are fetched over Wi-Fi from an NTP server, the readings can be sent to an MQTT broker, and a history of the readings is kept in the internal flash.
+An ESP32 weather station that reads **temperature**, **humidity** and **air pressure** from a BME280 sensor and shows the values in real time on the 0.96" SSD1306 OLED display built into the ideaspark ESP32 development board. The date and time are fetched over Wi-Fi from an NTP server, the readings can be sent to an MQTT broker, a history of the readings is kept in the internal flash, and a web page shows everything on the local network.
 
 Written in C++ with **ESP-IDF v6.1** and **FreeRTOS**. The BME280 and SSD1306 drivers are implemented directly on top of the ESP-IDF I2C driver; the only external component is Espressif's MQTT client (`espressif/mqtt`), which the build downloads automatically from the ESP Component Registry.
 
@@ -83,6 +83,25 @@ With a broker URI set in menuconfig (for example `mqtt://192.168.1.10:1883`), th
 
 `time` is the Unix time of the reading and appears once the clock has been synchronized. To watch the messages: `mosquitto_sub -h 192.168.1.10 -t weather-station/data -v`. With an empty URI, or without Wi-Fi, nothing is sent; broker failures never stop the station.
 
+## Web page
+
+Once Wi-Fi is connected, the station serves a page on the local network. Its address appears in the serial monitor:
+
+```
+I (5321) web: Web page at http://192.168.1.42/
+```
+
+The page shows the current values (refreshed at every measurement) and charts of the last 24 hours from the flash history, and has a link to download the whole history as CSV. It needs no internet access and works on phones. Tip: reserve the station's IP in your router (DHCP reservation) so the address does not change.
+
+| Address | Content |
+|---|---|
+| `/` | the page |
+| `/api/current` | current values as JSON |
+| `/api/history?hours=24` | history of the last N hours as JSON (at most 1440 points) |
+| `/history.csv` | the whole history as CSV |
+
+The page has no password and is read-only; anyone on the local network can see it. While the full CSV is downloading, the page pauses its updates (the server handles one request at a time).
+
 ## Measurement history
 
 Every 60 s (configurable) the latest reading is stored in the `history` partition of the internal flash (5 MB, about 327,000 readings, roughly 7.5 months at 60 s). When it is full, the oldest readings are overwritten. The history survives restarts and power loss.
@@ -120,7 +139,8 @@ All other tunable parameters live in [main/config.h](main/config.h):
 - task periods, stack sizes and priorities;
 - NTP server, time zone (default UTC-3), Wi-Fi retry interval and signal icon thresholds;
 - MQTT topic, QoS, retain flag and reconnect interval;
-- history partition label and console prompt.
+- history partition label and console prompt;
+- web server port, chart window, maximum points and connections.
 
 The flash layout is in [partitions.csv](partitions.csv).
 
@@ -132,6 +152,8 @@ The firmware runs four FreeRTOS tasks, plus the serial console:
 - **`taskDisplay`**: refreshes the display every 1 s, and right away when a new measurement arrives, with a measurement dot, the date and time and a Wi-Fi signal icon in the header.
 - **`taskPublish`**: sends the latest reading to the MQTT broker at the publish interval (60 s by default), only when the broker is configured.
 - **`taskLog`**: stores the latest reading in the flash history at the log interval (60 s by default).
+
+The HTTP server (`web_server`) runs in its own ESP-IDF task once Wi-Fi has an IP address.
 
 Wi-Fi and NTP run in the background (`net_time`), as does the MQTT client (`telemetry`); all of them reconnect on their own and network failures never stop the station.
 
@@ -147,6 +169,8 @@ main/
 ├── net_time.*    # Wi-Fi station + NTP time of day
 ├── telemetry.*   # MQTT client, JSON payload
 ├── history.*     # measurement history in flash + `log` console command
+├── web_server.*  # HTTP server: page, JSON and CSV
+├── web_page.html # the web page, embedded in the firmware
 ├── idf_component.yml  # external component: espressif/mqtt
 └── Kconfig.projbuild  # menuconfig menu: intervals, Wi-Fi, MQTT broker
 partitions.csv    # flash layout: nvs, phy_init, factory app (2 MB), history (5 MB)
@@ -156,6 +180,5 @@ The full functional specification is in [esp32-weather-station.md](esp32-weather
 
 ## Roadmap
 
-- Local web server to view the readings
 - Sensor calibration
 - Hardware RTC module so the time survives power loss without Wi-Fi

@@ -80,6 +80,16 @@ constexpr const char *HISTORY_PARTITION_LABEL = "history";
 constexpr const char *CONSOLE_PROMPT      = "weather> ";
 
 // ---------------------------------------------------------------------------
+// Web page on the local network (FR-8.x)
+// ---------------------------------------------------------------------------
+constexpr uint16_t    WEB_SERVER_PORT        = 80;
+// Simultaneous connections; lwIP has 10 sockets, shared with MQTT and SNTP
+constexpr uint16_t    WEB_MAX_CLIENTS        = 4;
+constexpr uint32_t    WEB_HISTORY_HOURS      = 24;    // chart window on the page
+constexpr uint32_t    WEB_HISTORY_MAX_HOURS  = 8760;  // limit of /api/history?hours= (1 year)
+constexpr uint32_t    WEB_HISTORY_MAX_POINTS = 1440;  // older points are thinned out
+
+// ---------------------------------------------------------------------------
 // Status LED (blue LED on GPIO2 of the board), used to signal error mode
 // ---------------------------------------------------------------------------
 constexpr gpio_num_t STATUS_LED_PIN          = GPIO_NUM_2;
@@ -102,11 +112,13 @@ constexpr uint32_t    DISPLAY_TASK_STACK  = 4096;
 constexpr uint32_t    PUBLISH_TASK_STACK  = 4096;
 constexpr uint32_t    LOG_TASK_STACK      = 4096;
 constexpr uint32_t    CONSOLE_TASK_STACK  = 6144;  // `log dump` formats floats
+constexpr uint32_t    WEB_TASK_STACK      = 6144;  // JSON/CSV formatting + 1 KB send buffer
 constexpr UBaseType_t MEASURE_TASK_PRIO   = 5;
 constexpr UBaseType_t DISPLAY_TASK_PRIO   = 4;
 constexpr UBaseType_t PUBLISH_TASK_PRIO   = 3;
 constexpr UBaseType_t LOG_TASK_PRIO       = 3;
 constexpr UBaseType_t CONSOLE_TASK_PRIO   = 2;
+constexpr UBaseType_t WEB_TASK_PRIO       = 2;
 
 // Max time a task waits for a mutex before giving up on the current cycle
 constexpr uint32_t    MUTEX_TIMEOUT_MS    = 500;
