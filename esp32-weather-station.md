@@ -1,6 +1,6 @@
 # Functional Specification: ESP32 Weather Station
 
-**Version:** 1.7.0
+**Version:** 1.7.1
 
 ## Document Control
 
@@ -16,6 +16,7 @@
 | 1.5.0   | 2026-10-16 | Weather data sent to an MQTT broker (FR-6.1 to FR-6.6). |
 | 1.6.0   | 2026-10-16 | Measurement history in the internal flash, read on the serial console (FR-7.1 to FR-7.6). |
 | 1.7.0   | 2026-10-16 | Web page on the local network with current values, history charts and CSV download (FR-8.1 to FR-8.6). |
+| 1.7.1   | 2026-10-16 | MQTT reconnection follows the Wi-Fi state: immediate after Wi-Fi returns, no attempts while it is down (FR-6.5 changed). |
 
 ### Requirement Markers
 *   **`[PROPOSED]`**: The requirement is new and not implemented yet.
@@ -86,7 +87,7 @@ The main goal is to provide a weather station that is easy to build and use, del
 *   **FR-6.2** [v1.5.0]: The latest valid measurement MUST be published at the publish interval set via `idf.py menuconfig` ("Weather Station" menu, `CONFIG_WS_MQTT_PUBLISH_PERIOD_S`), in seconds, from 1 to 86400, default 60. The interval is independent of the measurement interval (FR-3.2). A measurement that was already published is not sent again, and nothing is sent while the sensor has no valid reading.
 *   **FR-6.3** [v1.5.0]: Each message MUST be a JSON object with the fields `temperature_c`, `humidity_rh` and `pressure_hpa` (two decimal places) and, once the clock is synchronized (FR-5.1), `time` with the Unix time of the measurement in seconds. Example: `{"time":1792161125,"temperature_c":23.41,"humidity_rh":56.12,"pressure_hpa":1012.84}`.
 *   **FR-6.4** [v1.5.0]: Messages MUST be published to the topic defined in `main/config.h` (default `weather-station/data`) with QoS 0 and the retain flag set, so a new subscriber receives the latest reading at once.
-*   **FR-6.5** [v1.5.0]: MQTT failures MUST NOT be critical errors: the weather station MUST keep measuring and displaying, log a warning (`ESP_LOGW`), skip the publish while disconnected, and reconnect to the broker automatically (every 10 s by default).
+*   **FR-6.5** [CHANGED v1.7.1]: MQTT failures MUST NOT be critical errors: the weather station MUST keep measuring and displaying, log a warning (`ESP_LOGW`), skip the publish while disconnected, and reconnect to the broker automatically. While Wi-Fi has an IP address, a failed connection is retried every 10 s by default; while Wi-Fi is down, no connection is attempted; when Wi-Fi gets an IP address again, the client reconnects at once. Before v1.7.1: "reconnect to the broker automatically (every 10 s by default)", which also tried, and logged errors, while Wi-Fi was down, and waited up to 10 s after Wi-Fi returned.
 *   **FR-6.6** [v1.5.0]: The broker URI, user name and password MUST be set via `idf.py menuconfig` ("Weather Station" menu) and stored only in the local `sdkconfig`, which is not version-controlled. With an empty broker URI, or without Wi-Fi (FR-5.6), data transmission is disabled.
 
 ### 3.7 Measurement History

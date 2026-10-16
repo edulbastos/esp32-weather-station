@@ -7,15 +7,38 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_wifi.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/timers.h"
 #include "mqtt_client.h"
 
 static const char *TAG = "telemetry";
 
 namespace {
 
+// FR-6.5: the client does not reconnect on its own (disable_auto_reconnect).
+// This module retries every MQTT_RECONNECT_MS while Wi-Fi has an IP address,
+// does not try at all while Wi-Fi is down, and reconnects at once when the
+// IP address comes back.
 esp_mqtt_client_handle_t s_client = nullptr;
+TimerHandle_t s_retry_timer = nullptr;
 std::atomic<bool> s_client_started{false};
 std::atomic<bool> s_connected{false};
+std::atomic<bool> s_has_ip{false};
+
+void reconnect_now()
+{
+    // Only acts while the client waits for a reconnection; otherwise the next
+    // MQTT_EVENT_DISCONNECTED schedules the retry.
+    esp_mqtt_client_reconnect(s_client);
+}
+
+void on_retry_timer(TimerHandle_t)
+{
+    if (s_has_ip) {
+        reconnect_now();
+    }
+}
 
 void on_mqtt_event(void *, esp_event_base_t, int32_t id, void *)
 {
@@ -24,13 +47,20 @@ void on_mqtt_event(void *, esp_event_base_t, int32_t id, void *)
         ESP_LOGI(TAG, "Connected to MQTT broker %s", config::MQTT_BROKER_URI);
         s_connected = true;
         break;
-    case MQTT_EVENT_DISCONNECTED:
-        // FR-6.5: the client reconnects on its own.
-        if (s_connected.exchange(false)) {
-            ESP_LOGW(TAG, "Disconnected from MQTT broker, retrying in %lu ms",
-                     static_cast<unsigned long>(config::MQTT_RECONNECT_MS));
+    case MQTT_EVENT_DISCONNECTED: {
+        // Also sent after every failed connection attempt.
+        const bool was_connected = s_connected.exchange(false);
+        if (s_has_ip) {
+            xTimerReset(s_retry_timer, 0);
+            if (was_connected) {
+                ESP_LOGW(TAG, "Disconnected from MQTT broker, retrying in %lu ms",
+                         static_cast<unsigned long>(config::MQTT_RECONNECT_MS));
+            }
+        } else if (was_connected) {
+            ESP_LOGW(TAG, "Disconnected from MQTT broker, waiting for Wi-Fi");
         }
         break;
+    }
     case MQTT_EVENT_ERROR:
         ESP_LOGW(TAG, "MQTT connection error");
         break;
@@ -40,16 +70,27 @@ void on_mqtt_event(void *, esp_event_base_t, int32_t id, void *)
 }
 
 // The broker can only be reached once Wi-Fi has an IP address, so the client
-// is started on the first IP_EVENT_STA_GOT_IP instead of at boot.
+// is started on the first IP_EVENT_STA_GOT_IP instead of at boot; on later
+// ones it reconnects without waiting for the retry timer.
 void on_got_ip(void *, esp_event_base_t, int32_t, void *)
 {
+    s_has_ip = true;
     if (!s_client_started.exchange(true)) {
         const esp_err_t err = esp_mqtt_client_start(s_client);
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "MQTT client start failed: %s", esp_err_to_name(err));
             s_client_started = false;
         }
+    } else {
+        xTimerStop(s_retry_timer, 0);
+        reconnect_now();
     }
+}
+
+void on_wifi_lost(void *, esp_event_base_t, int32_t, void *)
+{
+    s_has_ip = false;
+    xTimerStop(s_retry_timer, 0);
 }
 
 }  // namespace
@@ -63,13 +104,19 @@ esp_err_t start()
         return ESP_ERR_INVALID_STATE;
     }
 
+    s_retry_timer = xTimerCreate("mqttRetry", pdMS_TO_TICKS(config::MQTT_RECONNECT_MS), pdFALSE,
+                                 nullptr, on_retry_timer);
+    if (s_retry_timer == nullptr) {
+        return ESP_ERR_NO_MEM;
+    }
+
     esp_mqtt_client_config_t cfg = {};
     cfg.broker.address.uri = config::MQTT_BROKER_URI;
     if (config::MQTT_USERNAME[0] != '\0') {
         cfg.credentials.username = config::MQTT_USERNAME;
         cfg.credentials.authentication.password = config::MQTT_PASSWORD;
     }
-    cfg.network.reconnect_timeout_ms = config::MQTT_RECONNECT_MS;
+    cfg.network.disable_auto_reconnect = true;
 
     s_client = esp_mqtt_client_init(&cfg);
     if (s_client == nullptr) {
@@ -78,6 +125,12 @@ esp_err_t start()
     esp_err_t err = esp_mqtt_client_register_event(s_client, MQTT_EVENT_ANY, on_mqtt_event, nullptr);
     if (err == ESP_OK) {
         err = esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, on_got_ip, nullptr);
+    }
+    if (err == ESP_OK) {
+        err = esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, on_wifi_lost, nullptr);
+    }
+    if (err == ESP_OK) {
+        err = esp_event_handler_register(IP_EVENT, IP_EVENT_STA_LOST_IP, on_wifi_lost, nullptr);
     }
     if (err == ESP_OK) {
         ESP_LOGI(TAG, "Publishing to %s, topic \"%s\", every %lu ms", config::MQTT_BROKER_URI,

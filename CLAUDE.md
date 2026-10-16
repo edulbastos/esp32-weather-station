@@ -22,7 +22,7 @@ The project is built with ESP-IDF (v6.1) and uses FreeRTOS to run sensor measure
 *   `main/ssd1306.h`, `main/ssd1306.cpp`: SSD1306 driver with a local frame buffer.
 *   `main/font5x7.h`: 5x7 font (ASCII plus a degree sign at `0x7F`).
 *   `main/net_time.h`, `main/net_time.cpp`: Wi-Fi station with automatic reconnection, signal level for the header icon, and NTP time sync (time of day).
-*   `main/telemetry.h`, `main/telemetry.cpp`: MQTT client (connects once Wi-Fi has an IP, reconnects on its own) and the JSON payload.
+*   `main/telemetry.h`, `main/telemetry.cpp`: MQTT client and the JSON payload. Auto-reconnect of the client is off: the module reconnects at once when Wi-Fi gets an IP, retries every `MQTT_RECONNECT_MS` while it has one, and does not try while Wi-Fi is down.
 *   `main/history.h`, `main/history.cpp`: Measurement history as a ring buffer of 16-byte records with CRC16 on the `history` partition, and the `log` console command (`info`, `dump [N]`, `clear`).
 *   `main/web_server.h`, `main/web_server.cpp`: HTTP server (`esp_http_server`) started on the first IP address: `/`, `/api/current`, `/api/history?hours=N`, `/history.csv`. Large answers are sent in chunks.
 *   `main/web_page.html`: The web page (HTML, CSS and JavaScript in one file, no external resources), embedded in the firmware with `EMBED_FILES`.
