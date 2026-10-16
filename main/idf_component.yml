@@ -1,0 +1,7 @@
+## IDF Component Manager Manifest File
+dependencies:
+  idf:
+    version: '>=6.1.0'
+  # MQTT client (FR-6.x). Not part of ESP-IDF since v6.0; downloaded from the
+  # ESP Component Registry into managed_components/ on the first build.
+  espressif/mqtt: '^1.1.0'

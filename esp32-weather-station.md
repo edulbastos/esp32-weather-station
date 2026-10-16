@@ -1,6 +1,6 @@
 # Functional Specification: ESP32 Weather Station
 
-**Version:** 1.4.0
+**Version:** 1.5.0
 
 ## Document Control
 
@@ -13,6 +13,7 @@
 | 1.2.0   | 2026-10-15 | Wi-Fi signal icon in the OLED header (FR-5.7). |
 | 1.3.0   | 2026-10-15 | Measurement icon in the OLED header (FR-2.6). |
 | 1.4.0   | 2026-10-15 | Measurement interval set via menuconfig (FR-3.2, FR-1.4 changed). |
+| 1.5.0   | 2026-10-16 | Weather data sent to an MQTT broker (FR-6.1 to FR-6.6). |
 
 ### Requirement Markers
 *   **`[PROPOSED]`**: The requirement is new and not implemented yet.
@@ -78,6 +79,14 @@ The main goal is to provide a weather station that is easy to build and use, del
 *   **FR-5.6** [v1.1.0]: The Wi-Fi credentials (SSID and password) MUST be set via `idf.py menuconfig` ("Weather Station" menu) and stored only in the local `sdkconfig`, which is not version-controlled. With an empty SSID, Wi-Fi and the time of day are disabled.
 *   **FR-5.7** [v1.2.0]: The OLED header MUST show a Wi-Fi icon at its right edge: 1 to 3 arcs according to the signal strength (3 arcs at RSSI ≥ -60 dBm, 2 arcs at ≥ -70 dBm, 1 arc below; thresholds in `main/config.h`) while connected, and an X while disconnected. With no SSID configured, no icon is shown. The header text is centered in the space left of the icon.
 
+### 3.6 Data Transmission (MQTT)
+*   **FR-6.1** [v1.5.0]: The system MUST transmit the weather data over Wi-Fi to an MQTT broker (MQTT 3.1.1; `mqtt://` or `mqtts://` URI). This implements the "Wi-Fi connectivity" extension proposed in section 7 up to v1.4.0.
+*   **FR-6.2** [v1.5.0]: The latest valid measurement MUST be published at the publish interval set via `idf.py menuconfig` ("Weather Station" menu, `CONFIG_WS_MQTT_PUBLISH_PERIOD_S`), in seconds, from 1 to 86400, default 60. The interval is independent of the measurement interval (FR-3.2). A measurement that was already published is not sent again, and nothing is sent while the sensor has no valid reading.
+*   **FR-6.3** [v1.5.0]: Each message MUST be a JSON object with the fields `temperature_c`, `humidity_rh` and `pressure_hpa` (two decimal places) and, once the clock is synchronized (FR-5.1), `time` with the Unix time of the measurement in seconds. Example: `{"time":1792161125,"temperature_c":23.41,"humidity_rh":56.12,"pressure_hpa":1012.84}`.
+*   **FR-6.4** [v1.5.0]: Messages MUST be published to the topic defined in `main/config.h` (default `weather-station/data`) with QoS 0 and the retain flag set, so a new subscriber receives the latest reading at once.
+*   **FR-6.5** [v1.5.0]: MQTT failures MUST NOT be critical errors: the weather station MUST keep measuring and displaying, log a warning (`ESP_LOGW`), skip the publish while disconnected, and reconnect to the broker automatically (every 10 s by default).
+*   **FR-6.6** [v1.5.0]: The broker URI, user name and password MUST be set via `idf.py menuconfig` ("Weather Station" menu) and stored only in the local `sdkconfig`, which is not version-controlled. With an empty broker URI, or without Wi-Fi (FR-5.6), data transmission is disabled.
+
 ## 4. Non-Functional Requirements
 
 ### 4.1 Performance
@@ -110,6 +119,7 @@ The main goal is to provide a weather station that is easy to build and use, del
 *   **Development framework:** ESP-IDF v6.1 (CMake / `idf.py` build system)
 *   **Real-time operating system:** FreeRTOS (part of ESP-IDF)
 *   **Programming language:** C++ (entry point `app_main`)
+*   **External components:** `espressif/mqtt` (ESP-MQTT client, ESP Component Registry, declared in `main/idf_component.yml`). Since ESP-IDF v6.0 it is no longer part of ESP-IDF; the build downloads it into `managed_components/`.
 *   **ESP-IDF components:**
     *   `esp_driver_i2c` (`driver/i2c_master.h`, I2C master communication)
     *   `esp_driver_gpio` (GPIO configuration)
@@ -122,9 +132,10 @@ The main goal is to provide a weather station that is easy to build and use, del
     *   `ssd1306.h` / `ssd1306.cpp` (driver for the SSD1306 OLED, with a local frame buffer)
     *   `font5x7.h` (5x7 font for text output, including a degree sign)
     *   `net_time.h` / `net_time.cpp` (Wi-Fi connection with automatic reconnection and signal level, and NTP time synchronization)
+    *   `telemetry.h` / `telemetry.cpp` (MQTT client and JSON payload)
     *   `config.h` (central configuration)
-    *   `Kconfig.projbuild` ("Weather Station" menu in `idf.py menuconfig` for the measurement interval and the Wi-Fi credentials)
-    *   `main.cpp` (initialization and the FreeRTOS tasks `taskMeasure` and `taskDisplay`)
+    *   `Kconfig.projbuild` ("Weather Station" menu in `idf.py menuconfig` for the measurement interval, the Wi-Fi credentials and the MQTT broker)
+    *   `main.cpp` (initialization and the FreeRTOS tasks `taskMeasure`, `taskDisplay` and `taskPublish`)
 
 ## 6. Interfaces
 
@@ -145,10 +156,10 @@ The main goal is to provide a weather station that is easy to build and use, del
 *   **Wi-Fi:** 2.4 GHz station mode (WPA2-PSK, or an open network if no password is set).
 *   **Wi-Fi:** [v1.2.0] Add a symbol to indicate WiFi connectivity in the yellow area (see FR-5.7).
 *   **NTP:** SNTP client (UDP port 123), default server `pool.ntp.org`.
+*   **MQTT:** [v1.5.0] Client publishing the weather data as JSON to the configured broker (TCP 1883 for `mqtt://`, 8883 for `mqtts://`), topic `weather-station/data` (see FR-6.1 to FR-6.6).
 
 ## 7. Open Issues / Future Extensions
 
-*   **Wi-Fi connectivity:** Add a feature to transmit weather data to a server or cloud service.
 *   **Data logging:** Store historical weather data on an SD card or in the ESP32's internal flash memory.
 *   **Web server:** Implement a simple web server on the ESP32 to display the data on the local network.
 *   **Calibration:** Provide a way to calibrate the sensor data.

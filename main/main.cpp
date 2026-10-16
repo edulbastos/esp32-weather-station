@@ -4,9 +4,11 @@
 // Tasks:
 //   taskMeasure - reads the BME280 every MEASURE_PERIOD_MS
 //   taskDisplay - redraws the OLED every DISPLAY_PERIOD_MS
+//   taskPublish - sends the latest measurement via MQTT every MQTT_PUBLISH_PERIOD_MS
 // i2cMutex serializes access to the shared I2C bus, dataMutex protects the
-// latest measurement shared between the two tasks.
-// Wi-Fi and NTP (net_time) run in the background and provide the time of day.
+// latest measurement shared between the tasks.
+// Wi-Fi and NTP (net_time) run in the background and provide the time of day;
+// telemetry holds the MQTT client.
 
 #include <cstdio>
 #include <ctime>
@@ -20,6 +22,7 @@
 #include "freertos/task.h"
 #include "net_time.h"
 #include "ssd1306.h"
+#include "telemetry.h"
 
 static const char *TAG = "weather";
 
@@ -29,6 +32,7 @@ struct SharedData {
     Bme280Data values;
     bool valid;  // false until the first successful read or after sensor loss
     TickType_t sample_tick;  // when the last successful read arrived (FR-2.6)
+    time_t sample_time;      // Unix time of that read, 0 before NTP sync (FR-6.3)
 };
 
 i2c_master_bus_handle_t s_bus = nullptr;
@@ -234,6 +238,7 @@ void taskMeasure(void *)
 
     while (true) {
         Bme280Data sample = {};
+        time_t sample_time = 0;
         esp_err_t err = ESP_ERR_TIMEOUT;
 
         if (xSemaphoreTake(s_i2c_mutex, mutex_timeout()) == pdTRUE) {
@@ -256,6 +261,7 @@ void taskMeasure(void *)
             char stamp[24] = "";
             struct tm now;
             if (net_time::local_time(now)) {
+                sample_time = time(nullptr);
                 strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S  ", &now);
             }
             ESP_LOGI(TAG, "%sT=%.2f C  H=%.2f %%RH  P=%.2f hPa  Alt~%.0f m", stamp,
@@ -271,6 +277,7 @@ void taskMeasure(void *)
                 s_data.values = sample;
                 s_data.valid = true;
                 s_data.sample_tick = xTaskGetTickCount();
+                s_data.sample_time = sample_time;
             } else if (errors >= config::MAX_CONSECUTIVE_ERRORS) {
                 s_data.valid = false;  // stop showing stale values
             }
@@ -345,6 +352,44 @@ void taskDisplay(void *)
     }
 }
 
+// FR-6.2: sends the latest valid measurement to the MQTT broker. Readings that
+// were already sent are not repeated, and failures only log a warning (FR-6.5).
+void taskPublish(void *)
+{
+    TickType_t last_sent_tick = 0;
+    bool sent_any = false;
+    TickType_t last_wake = xTaskGetTickCount();
+
+    while (true) {
+        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(config::MQTT_PUBLISH_PERIOD_MS));
+
+        SharedData snapshot = {};
+        if (xSemaphoreTake(s_data_mutex, mutex_timeout()) != pdTRUE) {
+            ESP_LOGW(TAG, "taskPublish: data busy, skipping this cycle");
+            continue;
+        }
+        snapshot = s_data;
+        xSemaphoreGive(s_data_mutex);
+
+        if (!snapshot.valid) {
+            ESP_LOGW(TAG, "No valid measurement to publish");
+            continue;
+        }
+        if (sent_any && snapshot.sample_tick == last_sent_tick) {
+            continue;  // no new reading since the last publish
+        }
+
+        const esp_err_t err = telemetry::publish(snapshot.values, snapshot.sample_time);
+        if (err == ESP_OK) {
+            last_sent_tick = snapshot.sample_tick;
+            sent_any = true;
+        } else {
+            ESP_LOGW(TAG, "MQTT publish skipped: %s",
+                     err == ESP_ERR_INVALID_STATE ? "not connected to the broker" : esp_err_to_name(err));
+        }
+    }
+}
+
 }  // namespace
 
 extern "C" void app_main(void)
@@ -397,6 +442,21 @@ extern "C" void app_main(void)
     err = net_time::start();
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
         ESP_LOGW(TAG, "Time of day unavailable: %s", esp_err_to_name(err));
+    }
+
+    // FR-6.1, FR-6.5: MQTT needs Wi-Fi; its failures are not critical either.
+    if (err == ESP_OK) {
+        err = telemetry::start();
+        if (err == ESP_OK) {
+            if (xTaskCreate(taskPublish, "taskPublish", config::PUBLISH_TASK_STACK, nullptr,
+                            config::PUBLISH_TASK_PRIO, nullptr) != pdPASS) {
+                ESP_LOGW(TAG, "taskPublish creation failed, data transmission disabled");
+            }
+        } else if (err != ESP_ERR_INVALID_STATE) {
+            ESP_LOGW(TAG, "Data transmission unavailable: %s", esp_err_to_name(err));
+        }
+    } else if (config::MQTT_BROKER_URI[0] != '\0') {
+        ESP_LOGW(TAG, "MQTT broker configured but Wi-Fi is not, data transmission disabled");
     }
 
     ESP_LOGI(TAG, "Running: measure every %lu ms, display every %lu ms",

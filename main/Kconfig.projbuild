@@ -20,4 +20,31 @@ menu "Weather Station"
         help
             Password of the Wi-Fi network. Leave empty for an open network.
 
+    config WS_MQTT_BROKER_URI
+        string "MQTT broker URI"
+        default ""
+        help
+            Broker that receives the weather data (FR-6.1), for example
+            mqtt://192.168.1.10:1883 or mqtts://broker.example.com:8883.
+            Leave empty to disable data transmission. Needs Wi-Fi.
+
+    config WS_MQTT_USERNAME
+        string "MQTT username"
+        default ""
+        help
+            Leave empty if the broker does not require authentication.
+
+    config WS_MQTT_PASSWORD
+        string "MQTT password"
+        default ""
+        help
+            Password of the MQTT user. Stored only in the local sdkconfig.
+
+    config WS_MQTT_PUBLISH_PERIOD_S
+        int "MQTT publish interval (seconds)"
+        range 1 86400
+        default 60
+        help
+            How often the latest measurement is sent to the broker (FR-6.2).
+
 endmenu
