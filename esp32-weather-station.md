@@ -1,6 +1,6 @@
 # Functional Specification: ESP32 Weather Station
 
-**Version:** 1.5.0
+**Version:** 1.6.0
 
 ## Document Control
 
@@ -14,6 +14,7 @@
 | 1.3.0   | 2026-10-15 | Measurement icon in the OLED header (FR-2.6). |
 | 1.4.0   | 2026-10-15 | Measurement interval set via menuconfig (FR-3.2, FR-1.4 changed). |
 | 1.5.0   | 2026-10-16 | Weather data sent to an MQTT broker (FR-6.1 to FR-6.6). |
+| 1.6.0   | 2026-10-16 | Measurement history in the internal flash, read on the serial console (FR-7.1 to FR-7.6). |
 
 ### Requirement Markers
 *   **`[PROPOSED]`**: The requirement is new and not implemented yet.
@@ -87,6 +88,14 @@ The main goal is to provide a weather station that is easy to build and use, del
 *   **FR-6.5** [v1.5.0]: MQTT failures MUST NOT be critical errors: the weather station MUST keep measuring and displaying, log a warning (`ESP_LOGW`), skip the publish while disconnected, and reconnect to the broker automatically (every 10 s by default).
 *   **FR-6.6** [v1.5.0]: The broker URI, user name and password MUST be set via `idf.py menuconfig` ("Weather Station" menu) and stored only in the local `sdkconfig`, which is not version-controlled. With an empty broker URI, or without Wi-Fi (FR-5.6), data transmission is disabled.
 
+### 3.7 Measurement History
+*   **FR-7.1** [v1.6.0]: The system MUST store a history of the measurements in the internal flash, in the 5 MB data partition `history` defined in `partitions.csv`. This implements the "Data logging" extension proposed in section 7 up to v1.5.0 (internal flash option; no SD card). The partition table keeps the offsets of `nvs` and `phy_init` and enlarges the app partition from 1 MB to 2 MB.
+*   **FR-7.2** [v1.6.0]: The latest valid measurement MUST be stored at the log interval set via `idf.py menuconfig` ("Weather Station" menu, `CONFIG_WS_LOG_PERIOD_S`), in seconds, from 1 to 86400, default 60. The interval is independent of the measurement and publish intervals. A measurement is stored only once, and nothing is stored while the sensor has no valid reading.
+*   **FR-7.3** [v1.6.0]: Each record MUST hold a sequence number, the Unix time of the measurement (0 before the clock is synchronized), the temperature (0.01 °C), the humidity (0.01 %RH), the pressure (0.1 hPa) and a CRC16. The history works as a ring buffer: when it is full, the oldest 4 KB sector (256 records) is erased. Capacity: 327,680 records, about 7.5 months at 60 s. The history survives restarts and power loss; a record cut short by a power loss is discarded.
+*   **FR-7.4** [v1.6.0]: The history MUST be readable on the serial console (prompt `weather> `, 115200 baud): `log info` shows the number of records and the space used; `log dump [N]` prints the last N records (all if N is omitted), oldest first, as CSV with the columns `seq,time,temperature_c,humidity_rh,pressure_hpa`, where `time` is local time `YYYY-MM-DD HH:MM:SS` (empty if unknown). Other log output is suppressed during the dump. `help` lists the commands.
+*   **FR-7.5** [v1.6.0]: The command `log clear` MUST erase the whole history.
+*   **FR-7.6** [v1.6.0]: History failures MUST NOT be critical errors: if the partition is missing or a write fails, the system logs a warning (`ESP_LOGW`) and keeps measuring, displaying and publishing.
+
 ## 4. Non-Functional Requirements
 
 ### 4.1 Performance
@@ -114,6 +123,7 @@ The main goal is to provide a weather station that is easy to build and use, del
 *   **Microcontroller:** ESP32 (ESP-WROOM-32 module)
 *   **Sensor:** BME280 (temperature, humidity, pressure)
 *   **Display:** SSD1306 OLED (I2C, 128x64 pixels)
+*   **Flash:** [v1.6.0] 8 MB: `nvs` 24 KB, `phy_init` 4 KB, app `factory` 2 MB, `history` 5 MB (`partitions.csv`)
 
 ### 5.2 Software Components
 *   **Development framework:** ESP-IDF v6.1 (CMake / `idf.py` build system)
@@ -127,15 +137,18 @@ The main goal is to provide a weather station that is easy to build and use, del
     *   `esp_wifi`, `esp_netif`, `esp_event`, `lwip` (Wi-Fi station and TCP/IP stack)
     *   `esp_netif_sntp` (NTP time synchronization, part of `esp_netif`)
     *   `nvs_flash` (non-volatile storage required by the Wi-Fi driver)
+    *   `esp_partition` (raw access to the `history` partition)
+    *   `console` (serial console with the `log` command)
 *   **Project modules:**
     *   `bme280.h` / `bme280.cpp` (driver for the BME280 sensor, using the Bosch datasheet compensation formulas)
     *   `ssd1306.h` / `ssd1306.cpp` (driver for the SSD1306 OLED, with a local frame buffer)
     *   `font5x7.h` (5x7 font for text output, including a degree sign)
     *   `net_time.h` / `net_time.cpp` (Wi-Fi connection with automatic reconnection and signal level, and NTP time synchronization)
     *   `telemetry.h` / `telemetry.cpp` (MQTT client and JSON payload)
+    *   `history.h` / `history.cpp` (measurement history ring buffer in flash and the `log` console command)
     *   `config.h` (central configuration)
-    *   `Kconfig.projbuild` ("Weather Station" menu in `idf.py menuconfig` for the measurement interval, the Wi-Fi credentials and the MQTT broker)
-    *   `main.cpp` (initialization and the FreeRTOS tasks `taskMeasure`, `taskDisplay` and `taskPublish`)
+    *   `Kconfig.projbuild` ("Weather Station" menu in `idf.py menuconfig` for the measurement interval, the Wi-Fi credentials, the MQTT broker and the history log interval)
+    *   `main.cpp` (initialization, the serial console and the FreeRTOS tasks `taskMeasure`, `taskDisplay`, `taskPublish` and `taskLog`)
 
 ## 6. Interfaces
 
@@ -151,6 +164,7 @@ The main goal is to provide a weather station that is easy to build and use, del
 
 ### 6.3 Serial Interface
 *   The serial interface is used for debug output at 115200 baud (ESP-IDF console UART, viewed with `idf.py monitor`).
+*   [v1.6.0] Interactive console on the same UART (prompt `weather> `): `help`, `log info`, `log dump [N]`, `log clear` (see FR-7.4, FR-7.5).
 
 ### 6.4 Network Interface
 *   **Wi-Fi:** 2.4 GHz station mode (WPA2-PSK, or an open network if no password is set).
@@ -160,7 +174,6 @@ The main goal is to provide a weather station that is easy to build and use, del
 
 ## 7. Open Issues / Future Extensions
 
-*   **Data logging:** Store historical weather data on an SD card or in the ESP32's internal flash memory.
 *   **Web server:** Implement a simple web server on the ESP32 to display the data on the local network.
 *   **Calibration:** Provide a way to calibrate the sensor data.
 *   **Hardware RTC:** Add an RTC module (e.g. DS3231) so the time of day survives power loss without Wi-Fi (the time of day via NTP is implemented in v1.1.0).

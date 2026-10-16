@@ -1,0 +1,9 @@
+# Partition table of the weather station (8 MB flash)
+# nvs and phy_init keep the offsets of the ESP-IDF single-app table, so the
+# Wi-Fi calibration data survives the change. history holds the measurement
+# log (FR-7.1).
+# Name,    Type, SubType,   Offset,  Size
+nvs,       data, nvs,       0x9000,  0x6000
+phy_init,  data, phy,       0xf000,  0x1000
+factory,   app,  factory,   0x10000, 2M
+history,   data, undefined, ,        5M

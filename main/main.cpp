@@ -5,10 +5,12 @@
 //   taskMeasure - reads the BME280 every MEASURE_PERIOD_MS
 //   taskDisplay - redraws the OLED every DISPLAY_PERIOD_MS
 //   taskPublish - sends the latest measurement via MQTT every MQTT_PUBLISH_PERIOD_MS
+//   taskLog     - stores the latest measurement in the flash history every LOG_PERIOD_MS
 // i2cMutex serializes access to the shared I2C bus, dataMutex protects the
 // latest measurement shared between the tasks.
 // Wi-Fi and NTP (net_time) run in the background and provide the time of day;
-// telemetry holds the MQTT client.
+// telemetry holds the MQTT client. The serial console offers the `log` command
+// to read the history.
 
 #include <cstdio>
 #include <ctime>
@@ -16,10 +18,12 @@
 #include "config.h"
 #include "driver/gpio.h"
 #include "driver/i2c_master.h"
+#include "esp_console.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "history.h"
 #include "net_time.h"
 #include "ssd1306.h"
 #include "telemetry.h"
@@ -352,6 +356,24 @@ void taskDisplay(void *)
     }
 }
 
+// Copies the latest measurement for taskPublish and taskLog. Returns false if
+// there is none or it is the one already handled (`last_tick`).
+bool take_new_sample(SharedData &out, bool handled_any, TickType_t last_tick, const char *task)
+{
+    if (xSemaphoreTake(s_data_mutex, mutex_timeout()) != pdTRUE) {
+        ESP_LOGW(TAG, "%s: data busy, skipping this cycle", task);
+        return false;
+    }
+    out = s_data;
+    xSemaphoreGive(s_data_mutex);
+
+    if (!out.valid) {
+        ESP_LOGW(TAG, "%s: no valid measurement", task);
+        return false;
+    }
+    return !handled_any || out.sample_tick != last_tick;
+}
+
 // FR-6.2: sends the latest valid measurement to the MQTT broker. Readings that
 // were already sent are not repeated, and failures only log a warning (FR-6.5).
 void taskPublish(void *)
@@ -363,20 +385,9 @@ void taskPublish(void *)
     while (true) {
         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(config::MQTT_PUBLISH_PERIOD_MS));
 
-        SharedData snapshot = {};
-        if (xSemaphoreTake(s_data_mutex, mutex_timeout()) != pdTRUE) {
-            ESP_LOGW(TAG, "taskPublish: data busy, skipping this cycle");
+        SharedData snapshot;
+        if (!take_new_sample(snapshot, sent_any, last_sent_tick, "taskPublish")) {
             continue;
-        }
-        snapshot = s_data;
-        xSemaphoreGive(s_data_mutex);
-
-        if (!snapshot.valid) {
-            ESP_LOGW(TAG, "No valid measurement to publish");
-            continue;
-        }
-        if (sent_any && snapshot.sample_tick == last_sent_tick) {
-            continue;  // no new reading since the last publish
         }
 
         const esp_err_t err = telemetry::publish(snapshot.values, snapshot.sample_time);
@@ -388,6 +399,53 @@ void taskPublish(void *)
                      err == ESP_ERR_INVALID_STATE ? "not connected to the broker" : esp_err_to_name(err));
         }
     }
+}
+
+// FR-7.2: stores the latest valid measurement in the flash history, once.
+void taskLog(void *)
+{
+    TickType_t last_logged_tick = 0;
+    bool logged_any = false;
+    TickType_t last_wake = xTaskGetTickCount();
+
+    while (true) {
+        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(config::LOG_PERIOD_MS));
+
+        SharedData snapshot;
+        if (!take_new_sample(snapshot, logged_any, last_logged_tick, "taskLog")) {
+            continue;
+        }
+        const esp_err_t err = history::append(snapshot.values, snapshot.sample_time);
+        if (err == ESP_OK) {
+            last_logged_tick = snapshot.sample_tick;
+            logged_any = true;
+        } else {
+            ESP_LOGW(TAG, "History write failed: %s", esp_err_to_name(err));
+        }
+    }
+}
+
+// FR-7.4: serial console with `help` and `log`, shown in `idf.py monitor`.
+esp_err_t start_console(bool with_history)
+{
+    esp_console_repl_t *repl = nullptr;
+    esp_console_repl_config_t repl_cfg = ESP_CONSOLE_REPL_CONFIG_DEFAULT();
+    repl_cfg.prompt = config::CONSOLE_PROMPT;
+    repl_cfg.task_stack_size = config::CONSOLE_TASK_STACK;
+    repl_cfg.task_priority = config::CONSOLE_TASK_PRIO;
+    esp_console_dev_uart_config_t uart_cfg = ESP_CONSOLE_DEV_UART_CONFIG_DEFAULT();
+
+    esp_err_t err = esp_console_new_repl_uart(&uart_cfg, &repl_cfg, &repl);
+    if (err == ESP_OK) {
+        err = esp_console_register_help_command();
+    }
+    if (err == ESP_OK && with_history) {
+        err = history::register_console_command();
+    }
+    if (err == ESP_OK) {
+        err = esp_console_start_repl(repl);
+    }
+    return err;
 }
 
 }  // namespace
@@ -457,6 +515,19 @@ extern "C" void app_main(void)
         }
     } else if (config::MQTT_BROKER_URI[0] != '\0') {
         ESP_LOGW(TAG, "MQTT broker configured but Wi-Fi is not, data transmission disabled");
+    }
+
+    // FR-7.6: the history is not critical either; without it the station runs on.
+    const bool history_ok = (err = history::init()) == ESP_OK;
+    if (!history_ok) {
+        ESP_LOGW(TAG, "Measurement history unavailable: %s", esp_err_to_name(err));
+    } else if (xTaskCreate(taskLog, "taskLog", config::LOG_TASK_STACK, nullptr,
+                           config::LOG_TASK_PRIO, nullptr) != pdPASS) {
+        ESP_LOGW(TAG, "taskLog creation failed, measurement history disabled");
+    }
+
+    if ((err = start_console(history_ok)) != ESP_OK) {
+        ESP_LOGW(TAG, "Serial console unavailable: %s", esp_err_to_name(err));
     }
 
     ESP_LOGI(TAG, "Running: measure every %lu ms, display every %lu ms",

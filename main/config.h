@@ -72,6 +72,14 @@ constexpr bool        MQTT_RETAIN         = true;  // new subscribers get the la
 constexpr uint32_t    MQTT_RECONNECT_MS   = 10000;
 
 // ---------------------------------------------------------------------------
+// Measurement history in the internal flash (FR-7.x)
+// ---------------------------------------------------------------------------
+// Data partition defined in partitions.csv (project root)
+constexpr const char *HISTORY_PARTITION_LABEL = "history";
+// Serial console used to read the history (`log` command)
+constexpr const char *CONSOLE_PROMPT      = "weather> ";
+
+// ---------------------------------------------------------------------------
 // Status LED (blue LED on GPIO2 of the board), used to signal error mode
 // ---------------------------------------------------------------------------
 constexpr gpio_num_t STATUS_LED_PIN          = GPIO_NUM_2;
@@ -86,13 +94,19 @@ constexpr uint32_t    DISPLAY_PERIOD_MS   = 1000;  // FR-2.4: at least every 1 s
 constexpr uint32_t    MEASURE_ICON_MS     = 500;   // FR-2.6: measurement icon duration
 // FR-6.2: set via `idf.py menuconfig` -> "Weather Station" (default 60 s)
 constexpr uint32_t    MQTT_PUBLISH_PERIOD_MS = CONFIG_WS_MQTT_PUBLISH_PERIOD_S * 1000;
+// FR-7.2: set via `idf.py menuconfig` -> "Weather Station" (default 60 s)
+constexpr uint32_t    LOG_PERIOD_MS       = CONFIG_WS_LOG_PERIOD_S * 1000;
 
 constexpr uint32_t    MEASURE_TASK_STACK  = 4096;
 constexpr uint32_t    DISPLAY_TASK_STACK  = 4096;
 constexpr uint32_t    PUBLISH_TASK_STACK  = 4096;
+constexpr uint32_t    LOG_TASK_STACK      = 4096;
+constexpr uint32_t    CONSOLE_TASK_STACK  = 6144;  // `log dump` formats floats
 constexpr UBaseType_t MEASURE_TASK_PRIO   = 5;
 constexpr UBaseType_t DISPLAY_TASK_PRIO   = 4;
 constexpr UBaseType_t PUBLISH_TASK_PRIO   = 3;
+constexpr UBaseType_t LOG_TASK_PRIO       = 3;
+constexpr UBaseType_t CONSOLE_TASK_PRIO   = 2;
 
 // Max time a task waits for a mutex before giving up on the current cycle
 constexpr uint32_t    MUTEX_TIMEOUT_MS    = 500;

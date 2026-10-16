@@ -7,6 +7,14 @@ menu "Weather Station"
         help
             How often the BME280 is read (FR-1.4, FR-3.2).
 
+    config WS_LOG_PERIOD_S
+        int "History log interval (seconds)"
+        range 1 86400
+        default 60
+        help
+            How often the latest measurement is stored in the flash history
+            (FR-7.2). With the 5 MB partition, 60 s keeps about 7.5 months.
+
     config WS_WIFI_SSID
         string "Wi-Fi SSID"
         default ""
