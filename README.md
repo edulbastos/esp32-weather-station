@@ -18,6 +18,14 @@ What the OLED display shows (128x64):
 
 The dot at the left lights up for 0.5 s each time a new measurement arrives. The Wi-Fi icon shows 1 to 3 arcs according to the signal strength and an X while disconnected. Before the clock is synchronized, the header shows "WEATHER STATION".
 
+## Display on/off (energy saving)
+
+The **BOOT** button of the board switches the display off and on. The display also switches off by itself after 5 minutes without a button press; pressing the button wakes it up. The time is set in `idf.py menuconfig` ("Display switch-off after inactivity", 0 = never). While the display is off, the station keeps measuring, logging and publishing.
+
+In the serial monitor: `display on`, `display off`, `display status`.
+
+The red **PWR** LED is wired straight to the 3.3 V supply and cannot be switched off by the firmware.
+
 ## Hardware
 
 | Component | Description |
@@ -128,7 +136,7 @@ To save the CSV on the PC, press `Ctrl+T` then `Ctrl+L` in the monitor before `l
 
 ## Configuration
 
-The measurement interval (1 to 3600 s, default 2 s), the Wi-Fi credentials, and the MQTT broker URI, user, password and publish interval (1 to 86400 s, default 60 s), and the history log interval (1 to 86400 s, default 60 s) are set with `idf.py menuconfig` in the "Weather Station" menu.
+The measurement interval (1 to 3600 s, default 2 s), the Wi-Fi credentials, and the MQTT broker URI, user, password and publish interval (1 to 86400 s, default 60 s), the history log interval (1 to 86400 s, default 60 s), and the display switch-off after inactivity (0 to 1440 min, default 5 min) are set with `idf.py menuconfig` in the "Weather Station" menu.
 
 All other tunable parameters live in [main/config.h](main/config.h):
 

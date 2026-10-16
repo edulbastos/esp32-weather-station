@@ -6,6 +6,8 @@
 //   taskDisplay - redraws the OLED every DISPLAY_PERIOD_MS
 //   taskPublish - sends the latest measurement via MQTT every MQTT_PUBLISH_PERIOD_MS
 //   taskLog     - stores the latest measurement in the flash history every LOG_PERIOD_MS
+// The BOOT button and the `display` console command switch the OLED on and
+// off; it also switches off after a period without interaction (FR-9.x).
 // A web server (web_server) shows the current values and the history on the
 // local network.
 // i2cMutex serializes access to the shared I2C bus, dataMutex protects the
@@ -14,7 +16,9 @@
 // telemetry holds the MQTT client. The serial console offers the `log` command
 // to read the history.
 
+#include <atomic>
 #include <cstdio>
+#include <cstring>
 #include <ctime>
 #include "bme280.h"
 #include "config.h"
@@ -50,6 +54,12 @@ SemaphoreHandle_t s_i2c_mutex = nullptr;   // i2cMutex
 SemaphoreHandle_t s_data_mutex = nullptr;  // dataMutex
 SharedData s_data = {};
 TaskHandle_t s_display_task = nullptr;     // woken by taskMeasure on new data
+
+// FR-9.1: display on/off requests from the button (ISR) and the console,
+// handled by taskDisplay, which owns the display.
+enum DisplayRequest : int { REQ_NONE, REQ_ON, REQ_OFF, REQ_TOGGLE };
+std::atomic<int> s_display_request{REQ_NONE};
+std::atomic<bool> s_display_on{true};  // current state, for `display status`
 
 constexpr TickType_t mutex_timeout() { return pdMS_TO_TICKS(config::MUTEX_TIMEOUT_MS); }
 
@@ -300,12 +310,62 @@ void taskMeasure(void *)
     }
 }
 
+// Asks taskDisplay to switch the display; safe from tasks only.
+void request_display(DisplayRequest req)
+{
+    s_display_request = req;
+    if (s_display_task != nullptr) {
+        xTaskNotifyGive(s_display_task);
+    }
+}
+
+// FR-9.1: BOOT button (active low). Presses closer than BUTTON_DEBOUNCE_MS
+// to the previous one are contact bounce and ignored.
+void on_button(void *)
+{
+    static TickType_t last_press = 0;
+    const TickType_t now = xTaskGetTickCountFromISR();
+    if (now - last_press < pdMS_TO_TICKS(config::BUTTON_DEBOUNCE_MS)) {
+        return;
+    }
+    last_press = now;
+    s_display_request = REQ_TOGGLE;
+    BaseType_t woken = pdFALSE;
+    vTaskNotifyGiveFromISR(s_display_task, &woken);
+    portYIELD_FROM_ISR(woken);
+}
+
+esp_err_t init_button()
+{
+    gpio_config_t io_cfg = {};
+    io_cfg.pin_bit_mask = 1ULL << config::BUTTON_PIN;
+    io_cfg.mode = GPIO_MODE_INPUT;
+    io_cfg.pull_up_en = GPIO_PULLUP_ENABLE;
+    io_cfg.intr_type = GPIO_INTR_NEGEDGE;
+    esp_err_t err = gpio_config(&io_cfg);
+    if (err == ESP_OK) {
+        err = gpio_install_isr_service(0);
+    }
+    if (err == ESP_OK) {
+        err = gpio_isr_handler_add(config::BUTTON_PIN, on_button, nullptr);
+    }
+    return err;
+}
+
+const char *request_source(int req)
+{
+    return req == REQ_TOGGLE ? "button" : "console";
+}
+
 void taskDisplay(void *)
 {
     int errors = 0;
     const TickType_t period = pdMS_TO_TICKS(config::DISPLAY_PERIOD_MS);
     const TickType_t icon_time = pdMS_TO_TICKS(config::MEASURE_ICON_MS);
+    const TickType_t auto_off = pdMS_TO_TICKS(config::DISPLAY_TIMEOUT_MS);
     TickType_t next_refresh = xTaskGetTickCount();
+    TickType_t last_activity = next_refresh;  // FR-9.2: last button press or command
+    bool on = true;
 
     while (true) {
         SharedData snapshot = {};
@@ -318,6 +378,41 @@ void taskDisplay(void *)
         const TickType_t now = xTaskGetTickCount();
         const TickType_t icon_age = now - snapshot.sample_tick;
         const bool measure_icon = snapshot.valid && icon_age < icon_time;
+
+        // FR-9.1, FR-9.2: decide whether the display should be on.
+        const int req = s_display_request.exchange(REQ_NONE);
+        bool want_on = on;
+        const char *reason = "inactivity";
+        if (req != REQ_NONE) {
+            last_activity = now;
+            want_on = req == REQ_TOGGLE ? !on : req == REQ_ON;
+            reason = request_source(req);
+        } else if (on && auto_off > 0 && now - last_activity >= auto_off) {
+            want_on = false;
+        }
+
+        if (!want_on) {
+            if (on) {
+                esp_err_t err = ESP_ERR_TIMEOUT;
+                if (xSemaphoreTake(s_i2c_mutex, mutex_timeout()) == pdTRUE) {
+                    err = s_display.set_power(false);  // panel sleep mode
+                    xSemaphoreGive(s_i2c_mutex);
+                }
+                if (err == ESP_OK) {
+                    on = false;
+                    s_display_on = false;
+                    ESP_LOGI(TAG, "Display off (%s)", reason);
+                } else if (req != REQ_NONE) {
+                    s_display_request = req;  // try again on the next cycle
+                }
+            }
+            if (!on) {
+                // Nothing to draw: sleep until a request or a new measurement.
+                ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+                continue;
+            }
+        }
+        const bool turning_on = !on;
 
         // Rendering only touches the local frame buffer, no bus access needed.
         render_screen(snapshot, measure_icon);
@@ -333,9 +428,24 @@ void taskDisplay(void *)
                     err = s_display.flush();
                 }
             }
+            // Switch the panel on only after the new frame is in, so the
+            // stale one is never shown.
+            if (err == ESP_OK && turning_on) {
+                err = s_display.set_power(true);
+            }
             xSemaphoreGive(s_i2c_mutex);
         } else {
             ESP_LOGW(TAG, "taskDisplay: I2C bus busy");
+        }
+
+        if (turning_on) {
+            if (err == ESP_OK) {
+                on = true;
+                s_display_on = true;
+                ESP_LOGI(TAG, "Display on (%s)", reason);
+            } else if (req != REQ_NONE) {
+                s_display_request = req;  // try again on the next cycle
+            }
         }
 
         if (err == ESP_OK) {
@@ -442,6 +552,28 @@ bool current_for_web(web_server::Current &out)
     return true;
 }
 
+// FR-9.1: console command `display on | off | status`.
+int cmd_display(int argc, char **argv)
+{
+    if (argc >= 2 && strcmp(argv[1], "on") == 0) {
+        request_display(REQ_ON);
+    } else if (argc >= 2 && strcmp(argv[1], "off") == 0) {
+        request_display(REQ_OFF);
+    } else if (argc < 2 || strcmp(argv[1], "status") == 0) {
+        printf("Display %s, ", s_display_on ? "on" : "off");
+        if (config::DISPLAY_TIMEOUT_MS > 0) {
+            printf("switches off after %lu min without activity\n",
+                   static_cast<unsigned long>(config::DISPLAY_TIMEOUT_MS / 60000));
+        } else {
+            printf("automatic switch-off disabled\n");
+        }
+    } else {
+        printf("Usage: display on | display off | display status\n");
+        return 1;
+    }
+    return 0;
+}
+
 // FR-7.4: serial console with `help` and `log`, shown in `idf.py monitor`.
 esp_err_t start_console(bool with_history)
 {
@@ -455,6 +587,14 @@ esp_err_t start_console(bool with_history)
     esp_err_t err = esp_console_new_repl_uart(&uart_cfg, &repl_cfg, &repl);
     if (err == ESP_OK) {
         err = esp_console_register_help_command();
+    }
+    if (err == ESP_OK) {
+        esp_console_cmd_t cmd = {};
+        cmd.command = "display";
+        cmd.help = "OLED display: 'on', 'off', or 'status' (state and automatic switch-off)";
+        cmd.hint = "on | off | status";
+        cmd.func = cmd_display;
+        err = esp_console_cmd_register(&cmd);
     }
     if (err == ESP_OK && with_history) {
         err = history::register_console_command();
@@ -511,6 +651,11 @@ extern "C" void app_main(void)
         xTaskCreate(taskDisplay, "taskDisplay", config::DISPLAY_TASK_STACK, nullptr,
                     config::DISPLAY_TASK_PRIO, &s_display_task) != pdPASS) {
         enter_error_mode("Task creation failed", true);
+    }
+
+    // FR-9.1: without the button the display stays on (console still works).
+    if ((err = init_button()) != ESP_OK) {
+        ESP_LOGW(TAG, "BOOT button unavailable: %s", esp_err_to_name(err));
     }
 
     // FR-5.5: Wi-Fi/NTP problems are not critical, the station keeps running.

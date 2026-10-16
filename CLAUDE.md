@@ -59,13 +59,13 @@ The Arduino libraries (`Wire.h`, `Adafruit_GFX.h`, `Adafruit_SSD1306.h`, `Adafru
 ## Development Conventions
 
 *   The code is written in C++; the entry point is `extern "C" void app_main(void)`.
-*   All configurable values belong in `main/config.h`; do not hard-code them elsewhere. Exceptions come from Kconfig (`idf.py menuconfig`) and are read into `config.h`: the measurement, MQTT publish and history log intervals, and per-installation settings and secrets (Wi-Fi credentials, MQTT broker URI and credentials), which are never committed.
+*   All configurable values belong in `main/config.h`; do not hard-code them elsewhere. Exceptions come from Kconfig (`idf.py menuconfig`) and are read into `config.h`: the measurement, MQTT publish and history log intervals, the display switch-off time, and per-installation settings and secrets (Wi-Fi credentials, MQTT broker URI and credentials), which are never committed.
 *   Use `ESP_LOGI`/`ESP_LOGW`/`ESP_LOGE` for serial output and return `esp_err_t` from driver functions.
 
 The code is divided into four tasks:
 
 *   **`taskMeasure`:** Measures the weather data from the BME280 sensor at the measurement interval (`CONFIG_WS_MEASURE_PERIOD_S`, default 2 seconds).
-*   **`taskDisplay`:** Updates the OLED display with the current weather data every 1 second. `taskMeasure` also wakes it with a task notification on each new measurement, so the measurement icon appears immediately and is cleared after `MEASURE_ICON_MS`.
+*   **`taskDisplay`:** Updates the OLED display with the current weather data every 1 second. `taskMeasure` also wakes it with a task notification on each new measurement, so the measurement icon appears immediately and is cleared after `MEASURE_ICON_MS`. It also owns the display power (FR-9.x): the BOOT button ISR and the `display` console command post a request in `s_display_request` and notify it; it switches the panel off after `CONFIG_WS_DISPLAY_TIMEOUT_MIN` without interaction, and while off it draws nothing and sleeps until notified.
 *   **`taskPublish`:** Sends the latest valid measurement to the MQTT broker at the publish interval (`CONFIG_WS_MQTT_PUBLISH_PERIOD_S`, default 60 seconds). Created only when Wi-Fi and a broker URI are configured.
 *   **`taskLog`:** Stores the latest valid measurement in the flash history at the log interval (`CONFIG_WS_LOG_PERIOD_S`, default 60 seconds).
 

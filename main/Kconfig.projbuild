@@ -15,6 +15,15 @@ menu "Weather Station"
             How often the latest measurement is stored in the flash history
             (FR-7.2). With the 5 MB partition, 60 s keeps about 7.5 months.
 
+    config WS_DISPLAY_TIMEOUT_MIN
+        int "Display switch-off after inactivity (minutes)"
+        range 0 1440
+        default 5
+        help
+            The OLED switches off when the BOOT button has not been pressed
+            (and no display command was given) for this time (FR-9.2).
+            Pressing the button switches it on again. 0 = never.
+
     config WS_WIFI_SSID
         string "Wi-Fi SSID"
         default ""

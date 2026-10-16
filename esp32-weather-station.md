@@ -1,6 +1,6 @@
 # Functional Specification: ESP32 Weather Station
 
-**Version:** 1.7.1
+**Version:** 1.8.0
 
 ## Document Control
 
@@ -17,6 +17,7 @@
 | 1.6.0   | 2026-10-16 | Measurement history in the internal flash, read on the serial console (FR-7.1 to FR-7.6). |
 | 1.7.0   | 2026-10-16 | Web page on the local network with current values, history charts and CSV download (FR-8.1 to FR-8.6). |
 | 1.7.1   | 2026-10-16 | MQTT reconnection follows the Wi-Fi state: immediate after Wi-Fi returns, no attempts while it is down (FR-6.5 changed). |
+| 1.8.0   | 2026-10-16 | Energy saving: display on/off with the BOOT button and the console, automatic switch-off after inactivity (FR-9.1, FR-9.2). |
 
 ### Requirement Markers
 *   **`[PROPOSED]`**: The requirement is new and not implemented yet.
@@ -106,6 +107,12 @@ The main goal is to provide a weather station that is easy to build and use, del
 *   **FR-8.5** [v1.7.0]: `/history.csv` MUST download the whole history as a CSV file, in the format of `log dump` (FR-7.4). The server handles one request at a time, so other requests wait while the download runs.
 *   **FR-8.6** [v1.7.0]: The web page MUST NOT be critical: it needs Wi-Fi (FR-5.6) and is disabled without an SSID; server failures only log a warning (`ESP_LOGW`). At most 4 connections are open at once; a new client closes the least recently used one.
 
+### 3.9 Energy Saving
+This section gathers the requirements that reduce the power consumption, in view of a future battery supply.
+
+*   **FR-9.1** [v1.8.0]: The user MUST be able to switch the OLED display off and on: the BOOT button of the board (GPIO0) toggles it, and the serial console offers `display on`, `display off` and `display status`. When off, the panel is in sleep mode (SSD1306 command `0xAE`) and no frame is sent over I2C; measuring, history, MQTT and the web page continue. When switched on, the panel shows the current data at once. The display is on after every start-up.
+*   **FR-9.2** [v1.8.0]: The display MUST switch itself off after a period without user interaction (a button press or a `display` command), set via `idf.py menuconfig` ("Weather Station" menu, `CONFIG_WS_DISPLAY_TIMEOUT_MIN`), in minutes, from 0 to 1440, default 5; 0 disables the automatic switch-off. A button press switches it on again and restarts the period. Each switch is logged on the serial console with its cause (button, console or inactivity).
+
 ## 4. Non-Functional Requirements
 
 ### 4.1 Performance
@@ -160,7 +167,7 @@ The main goal is to provide a weather station that is easy to build and use, del
     *   `web_server.h` / `web_server.cpp`, `web_page.html` (HTTP server and the page embedded in the firmware)
     *   `config.h` (central configuration)
     *   `Kconfig.projbuild` ("Weather Station" menu in `idf.py menuconfig` for the measurement interval, the Wi-Fi credentials, the MQTT broker and the history log interval)
-    *   `main.cpp` (initialization, the serial console, the data for the web page and the FreeRTOS tasks `taskMeasure`, `taskDisplay`, `taskPublish` and `taskLog`)
+    *   `main.cpp` (initialization, the serial console, the BOOT button and the display power control, the data for the web page and the FreeRTOS tasks `taskMeasure`, `taskDisplay`, `taskPublish` and `taskLog`)
 
 ## 6. Interfaces
 
@@ -169,14 +176,17 @@ The main goal is to provide a weather station that is easy to build and use, del
 *   Date and time in the header once the clock is synchronized.
 *   Wi-Fi signal icon at the right edge of the header.
 *   Measurement icon (filled dot) at the left edge of the header, shown for 0.5 s after each measurement.
+*   [v1.8.0] The BOOT button switches the display off and on; the display switches off after 5 minutes without a button press by default (see FR-9.1, FR-9.2).
 
 ### 6.2 Hardware Interfaces
 *   **I2C bus:** Uses GPIO 21 (SDA) and GPIO 22 (SCL) of the ESP32.
+*   **BOOT button:** [v1.8.0] GPIO 0 (active low), read by interrupt after start-up to switch the display. Held during a reset, it still selects the download mode of the ESP32.
 *   **Power supply:** 3.3V for the ESP32, BME280, and SSD1306.
 
 ### 6.3 Serial Interface
 *   The serial interface is used for debug output at 115200 baud (ESP-IDF console UART, viewed with `idf.py monitor`).
 *   [v1.6.0] Interactive console on the same UART (prompt `weather> `): `help`, `log info`, `log dump [N]`, `log clear` (see FR-7.4, FR-7.5).
+*   [v1.8.0] Console commands `display on`, `display off`, `display status` (see FR-9.1).
 
 ### 6.4 Network Interface
 *   **Wi-Fi:** 2.4 GHz station mode (WPA2-PSK, or an open network if no password is set).

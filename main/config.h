@@ -37,6 +37,16 @@ constexpr uint8_t DISPLAY_CONTRAST = 0xCF;
 constexpr int     DISPLAY_YELLOW_ROWS = 16;
 
 // ---------------------------------------------------------------------------
+// Energy saving (FR-9.x)
+// ---------------------------------------------------------------------------
+// BOOT button of the board, active low; toggles the display after start-up.
+// (Held during reset it still selects the download mode, as always.)
+constexpr gpio_num_t BUTTON_PIN          = GPIO_NUM_0;
+constexpr uint32_t   BUTTON_DEBOUNCE_MS  = 250;
+// FR-9.2: set via `idf.py menuconfig` -> "Weather Station" (default 5 min, 0 = never)
+constexpr uint32_t   DISPLAY_TIMEOUT_MS  = CONFIG_WS_DISPLAY_TIMEOUT_MIN * 60 * 1000;
+
+// ---------------------------------------------------------------------------
 // Measurement
 // ---------------------------------------------------------------------------
 // Reference sea-level pressure used for the altitude estimate (hPa)
