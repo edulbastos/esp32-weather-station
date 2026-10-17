@@ -101,6 +101,8 @@ constexpr const char *CONSOLE_PROMPT      = "weather> ";
 constexpr uint16_t    WEB_SERVER_PORT        = 80;
 // Simultaneous connections; lwIP has 10 sockets, shared with MQTT and SNTP
 constexpr uint16_t    WEB_MAX_CLIENTS        = 4;
+constexpr uint16_t    WEB_MAX_ROUTES         = 10;    // registered URIs (7 in use)
+constexpr uint16_t    WEB_SEND_TIMEOUT_S     = 15;    // give up sending after this
 constexpr uint32_t    WEB_HISTORY_HOURS      = 24;    // default window of /api/history
 constexpr uint32_t    WEB_HISTORY_MAX_HOURS  = 8760;  // limit of /api/history?hours= (1 year)
 constexpr uint32_t    WEB_CHART_POINTS       = 150;   // points per chart, averaged

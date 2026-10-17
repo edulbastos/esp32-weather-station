@@ -336,7 +336,15 @@ esp_err_t visit(uint32_t last_n, const Visitor &fn)
     const uint32_t first_seq = newest - last_n + 1;
     uint32_t last_seq = first_seq - 1;
 
-    for (size_t i = 1; i <= s_sectors; i++) {
+    // Records are written in order, one slot each, so the window starts at
+    // most this many sectors before the head: the records themselves, one for
+    // a partly filled head sector, and a margin for slots left empty by
+    // failed writes. Only these sectors are read (all of them for a full
+    // dump), instead of probing every sector of the partition.
+    const uint64_t span = (static_cast<uint64_t>(last_n) + RECORDS_PER_SECTOR - 1) / RECORDS_PER_SECTOR + 3;
+    const size_t first_i = span >= s_sectors ? 1 : s_sectors - static_cast<size_t>(span) + 1;
+
+    for (size_t i = first_i; i <= s_sectors; i++) {
         const size_t sector = (head + i) % s_sectors;  // oldest sector first
         esp_err_t err;
         {

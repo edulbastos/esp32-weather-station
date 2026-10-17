@@ -17,9 +17,12 @@
 
 static const char *TAG = "web";
 
-// web_page.html, embedded by main/CMakeLists.txt (EMBED_FILES)
+// web_page.html, embedded by main/CMakeLists.txt as is (EMBED_FILES) and
+// gzip-compressed (built from it at compile time)
 extern const char web_page_start[] asm("_binary_web_page_html_start");
 extern const char web_page_end[] asm("_binary_web_page_html_end");
+extern const char web_page_gz_start[] asm("_binary_web_page_html_gz_start");
+extern const char web_page_gz_end[] asm("_binary_web_page_html_gz_end");
 
 namespace {
 
@@ -85,14 +88,30 @@ private:
     bool ok_ = true;
 };
 
+bool accepts_gzip(httpd_req_t *req)
+{
+    char value[96] = "";
+    // A truncated value (ESP_ERR_HTTPD_RESULT_TRUNC) still holds its start.
+    const esp_err_t err = httpd_req_get_hdr_value_str(req, "Accept-Encoding", value, sizeof(value));
+    return (err == ESP_OK || err == ESP_ERR_HTTPD_RESULT_TRUNC) && strstr(value, "gzip") != nullptr;
+}
+
+// FR-8.2: the page, gzip-compressed when the browser accepts it, so fewer
+// packets have to cross the Wi-Fi link.
 esp_err_t handle_page(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html; charset=utf-8");
+    httpd_resp_set_hdr(req, "Vary", "Accept-Encoding");
+    if (accepts_gzip(req)) {
+        httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+        return httpd_resp_send(req, web_page_gz_start, web_page_gz_end - web_page_gz_start);
+    }
     return httpd_resp_send(req, web_page_start, web_page_end - web_page_start);
 }
 
-// FR-8.2: browsers that ask for /favicon.ico anyway get an empty answer
-// instead of a 404 (which ESP-IDF logs as a warning).
+// FR-8.2: browsers that ask for /favicon.ico anyway, and Safari on iOS asking
+// for its home-screen icons, get an empty answer instead of a 404 (which
+// ESP-IDF logs as a warning).
 esp_err_t handle_favicon(httpd_req_t *req)
 {
     httpd_resp_set_status(req, "204 No Content");
@@ -262,6 +281,10 @@ esp_err_t start_server()
     cfg.stack_size = config::WEB_TASK_STACK;
     cfg.task_priority = config::WEB_TASK_PRIO;
     cfg.max_open_sockets = config::WEB_MAX_CLIENTS;
+    cfg.max_uri_handlers = config::WEB_MAX_ROUTES;
+    // On a lossy link one segment can wait several seconds for its
+    // retransmission; the default 5 s cut pages off halfway.
+    cfg.send_wait_timeout = config::WEB_SEND_TIMEOUT_S;
     cfg.lru_purge_enable = true;  // a new client closes the least recently used connection
 
     esp_err_t err = httpd_start(&s_server, &cfg);
@@ -277,6 +300,8 @@ esp_err_t start_server()
         {"/api/history", handle_history},
         {"/history.csv", handle_csv},
         {"/favicon.ico", handle_favicon},
+        {"/apple-touch-icon.png", handle_favicon},
+        {"/apple-touch-icon-precomposed.png", handle_favicon},
     };
     for (const auto &r : routes) {
         httpd_uri_t uri = {};
