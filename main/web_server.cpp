@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -132,43 +133,85 @@ esp_err_t handle_current(httpd_req_t *req)
     return httpd_resp_sendstr(req, json);
 }
 
-// FR-8.4: records of the last `hours` hours as JSON, at most WEB_HISTORY_MAX_POINTS.
+// FR-8.4: the last `hours` hours as JSON, averaged into at most `points`
+// time buckets, so the answer stays small whatever the window. With buckets
+// shorter than the log interval every record is its own point.
 esp_err_t handle_history(httpd_req_t *req)
 {
     uint32_t hours = config::WEB_HISTORY_HOURS;
-    char query[32], value[12];
-    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK &&
-        httpd_query_key_value(query, "hours", value, sizeof(value)) == ESP_OK) {
-        hours = std::clamp<uint32_t>(strtoul(value, nullptr, 10), 1, config::WEB_HISTORY_MAX_HOURS);
+    uint32_t points = config::WEB_CHART_POINTS;
+    char query[48], value[12];
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
+        if (httpd_query_key_value(query, "hours", value, sizeof(value)) == ESP_OK) {
+            hours = std::clamp<uint32_t>(strtoul(value, nullptr, 10), 1, config::WEB_HISTORY_MAX_HOURS);
+        }
+        if (httpd_query_key_value(query, "points", value, sizeof(value)) == ESP_OK) {
+            points = std::clamp<uint32_t>(strtoul(value, nullptr, 10), 10, config::WEB_HISTORY_MAX_POINTS);
+        }
     }
+    const uint32_t window_s = hours * 3600;
+    const uint32_t bucket_s = std::max<uint32_t>(1, window_s / points);
 
-    // Records that can fall in the window at the current log interval, and
-    // every step-th of them so the answer stays small.
-    const uint64_t window_records = static_cast<uint64_t>(hours) * 3600 * 1000 / config::LOG_PERIOD_MS + 1;
+    // Records that can fall in the window at the current log interval.
+    const uint64_t window_records = static_cast<uint64_t>(window_s) * 1000 / config::LOG_PERIOD_MS + 1;
     const uint32_t last_n = static_cast<uint32_t>(std::min<uint64_t>(window_records, UINT32_MAX));
-    const uint32_t step = (last_n + config::WEB_HISTORY_MAX_POINTS - 1) / config::WEB_HISTORY_MAX_POINTS;
 
-    // Records without a time cannot be placed on the chart; with the clock
-    // synchronized, only the requested window is sent.
+    // Buckets start at the beginning of the window; before NTP sync the
+    // window is unknown and starts at the first record that has a time.
+    // Records without a time cannot be placed on the chart.
     struct tm now_tm;
-    const time_t cutoff = net_time::local_time(now_tm) ? time(nullptr) - static_cast<time_t>(hours) * 3600 : 1;
+    time_t base = net_time::local_time(now_tm) ? time(nullptr) - static_cast<time_t>(window_s) : 0;
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     ChunkWriter out(req);
-    out.print("{\"hours\":%lu,\"log_period_s\":%lu,\"records\":[", static_cast<unsigned long>(hours),
-               static_cast<unsigned long>(config::LOG_PERIOD_MS / 1000));
-    uint32_t index = 0;
+    out.print("{\"hours\":%lu,\"points\":%lu,\"bucket_s\":%lu,\"log_period_s\":%lu,\"records\":[",
+              static_cast<unsigned long>(hours), static_cast<unsigned long>(points),
+              static_cast<unsigned long>(bucket_s), static_cast<unsigned long>(config::LOG_PERIOD_MS / 1000));
+
+    struct {
+        int64_t index = -1;
+        uint32_t n = 0;
+        double time = 0, temp = 0, hum = 0, press = 0;
+    } acc;
     bool first = true;
-    const esp_err_t err = history::visit(last_n, [&](const history::Entry &e) {
-        if (index++ % step != 0 || e.time < cutoff) {
+    // Sends the average of the current bucket.
+    auto emit = [&]() {
+        if (acc.n == 0) {
             return true;
         }
-        const bool ok = out.print("%s[%lld,%.2f,%.2f,%.1f]", first ? "" : ",", static_cast<long long>(e.time),
-                                   e.temperature_c, e.humidity_rh, e.pressure_hpa);
+        const bool ok = out.print("%s[%lld,%.2f,%.2f,%.1f]", first ? "" : ",", llround(acc.time / acc.n),
+                                  acc.temp / acc.n, acc.hum / acc.n, acc.press / acc.n);
         first = false;
+        acc = {};
         return ok;
+    };
+
+    const esp_err_t err = history::visit(last_n, [&](const history::Entry &e) {
+        if (e.time == 0) {
+            return true;
+        }
+        if (base == 0) {
+            base = e.time;
+        }
+        if (e.time < base) {
+            return true;
+        }
+        const int64_t index = (e.time - base) / bucket_s;
+        if (index != acc.index) {
+            if (!emit()) {
+                return false;
+            }
+            acc.index = index;
+        }
+        acc.n++;
+        acc.time += e.time;
+        acc.temp += e.temperature_c;
+        acc.hum += e.humidity_rh;
+        acc.press += e.pressure_hpa;
+        return true;
     });
+    emit();
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
         ESP_LOGW(TAG, "History read failed: %s", esp_err_to_name(err));
     }

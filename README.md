@@ -99,13 +99,13 @@ Once Wi-Fi is connected, the station serves a page on the local network. Its add
 I (5321) web: Web page at http://192.168.1.42/
 ```
 
-The page shows the current values (refreshed at every measurement) and charts of the last 24 hours from the flash history, and has a link to download the whole history as CSV. It needs no internet access and works on phones. Tip: reserve the station's IP in your router (DHCP reservation) so the address does not change.
+The page shows the current values (refreshed at every measurement) and charts from the flash history over the last hour, 24 hours or 7 days (buttons above the charts), and has a link to download the whole history as CSV. Each chart has about 150 points: over 24 hours each point is the average of about 10 minutes, over 1 hour each measurement is its own point. The page loads the chart data once and then only adds the new measurements, so it stays light even when left open; the CSV keeps every single measurement. It needs no internet access and works on phones. Tip: reserve the station's IP in your router (DHCP reservation) so the address does not change.
 
 | Address | Content |
 |---|---|
 | `/` | the page |
 | `/api/current` | current values as JSON |
-| `/api/history?hours=24` | history of the last N hours as JSON (at most 1440 points) |
+| `/api/history?hours=24&points=150` | history of the last N hours as JSON, averaged into P points (defaults 24 and 150) |
 | `/history.csv` | the whole history as CSV |
 
 The page has no password and is read-only; anyone on the local network can see it. While the full CSV is downloading, the page pauses its updates (the server handles one request at a time).

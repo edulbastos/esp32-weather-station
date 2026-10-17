@@ -95,9 +95,10 @@ constexpr const char *CONSOLE_PROMPT      = "weather> ";
 constexpr uint16_t    WEB_SERVER_PORT        = 80;
 // Simultaneous connections; lwIP has 10 sockets, shared with MQTT and SNTP
 constexpr uint16_t    WEB_MAX_CLIENTS        = 4;
-constexpr uint32_t    WEB_HISTORY_HOURS      = 24;    // chart window on the page
+constexpr uint32_t    WEB_HISTORY_HOURS      = 24;    // default window of /api/history
 constexpr uint32_t    WEB_HISTORY_MAX_HOURS  = 8760;  // limit of /api/history?hours= (1 year)
-constexpr uint32_t    WEB_HISTORY_MAX_POINTS = 1440;  // older points are thinned out
+constexpr uint32_t    WEB_CHART_POINTS       = 150;   // points per chart, averaged
+constexpr uint32_t    WEB_HISTORY_MAX_POINTS = 1440;  // limit of /api/history?points=
 
 // ---------------------------------------------------------------------------
 // System health and network watchdog (NFR-2.3, NFR-2.4)

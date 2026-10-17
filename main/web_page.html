@@ -37,6 +37,14 @@
   .chart .grid { stroke: var(--line); }
   a { color: var(--hum); }
   footer { margin-top: 16px; font-size: 13px; color: var(--muted); }
+  .chart-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center;
+                gap: 8px; margin: 24px 0 8px; }
+  .chart-head h2 { margin: 0; }
+  .ranges { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .ranges button { font: inherit; font-size: 13px; padding: 4px 12px; border: 0; cursor: pointer;
+                   background: var(--card); color: var(--muted); }
+  .ranges button + button { border-left: 1px solid var(--line); }
+  .ranges button[aria-pressed="true"] { background: var(--hum); color: #fff; }
 </style>
 </head>
 <body>
@@ -55,7 +63,14 @@
       <div class="value"><span id="pres">----.-</span><span class="unit">hPa</span></div></div>
   </section>
 
-  <h2>Last <span id="hours">24</span> hours</h2>
+  <div class="chart-head">
+    <h2>Last <span id="range-label">24 hours</span></h2>
+    <div class="ranges" role="group" aria-label="Chart period">
+      <button type="button" data-hours="1">1 h</button>
+      <button type="button" data-hours="24">24 h</button>
+      <button type="button" data-hours="168">7 d</button>
+    </div>
+  </div>
   <section class="charts">
     <div class="card chart"><div class="label">Temperature (°C)</div><svg id="chart-temp"></svg></div>
     <div class="card chart"><div class="label">Humidity (%RH)</div><svg id="chart-hum"></svg></div>
@@ -69,12 +84,28 @@
 </main>
 
 <script>
-const HOURS = 24;
+const RANGES = { 1: "hour", 24: "24 hours", 168: "7 days" };
+const RESYNC_MS = 30 * 60 * 1000;  // full reload of the chart data
 const $ = (id) => document.getElementById(id);
-let historyData = null;
+
+let hours = 24;
+try {
+  const saved = Number(localStorage.getItem("chart-hours"));
+  if (RANGES[saved]) hours = saved;
+} catch (e) { /* storage unavailable: keep the default */ }
+
+// Chart data: points are { t, v: [temp, hum, pres], n }. Points from the
+// server have n = 0 (already averaged); points added by the page count the
+// measurements averaged into them.
+let chart = null;
+let historyTimer = null;
 
 function fmtTime(unix) {
   return new Date(unix * 1000).toLocaleString([], { dateStyle: "short", timeStyle: "medium" });
+}
+
+function fmtDuration(s) {
+  return s >= 3600 ? +(s / 3600).toFixed(1) + " h" : s >= 60 ? Math.round(s / 60) + " min" : s + " s";
 }
 
 function setStatus(text, error) {
@@ -82,7 +113,8 @@ function setStatus(text, error) {
   $("status").classList.toggle("error", !!error);
 }
 
-// FR-8.2: current values, refreshed at the measurement interval.
+// FR-8.2: current values, refreshed at the measurement interval. Each new
+// measurement is also added to the charts (FR-8.4).
 async function loadCurrent() {
   let delay = 5000;
   try {
@@ -97,6 +129,7 @@ async function loadCurrent() {
       $("pres").textContent = d.pressure_hpa.toFixed(1);
       const when = d.time ? fmtTime(d.time) : "clock not synchronized";
       setStatus("Measured " + when + wifi, false);
+      if (d.time) addPoint(d.time, [d.temperature_c, d.humidity_rh, d.pressure_hpa]);
     } else {
       $("temp").textContent = $("hum").textContent = "--.-";
       $("pres").textContent = "----.-";
@@ -108,33 +141,60 @@ async function loadCurrent() {
   setTimeout(loadCurrent, delay);
 }
 
-// FR-8.4: charts of the last HOURS hours, refreshed at the log interval.
+// FR-8.4: chart data, averaged by the station into about 150 points. Loaded
+// when the page opens, when the period changes and every RESYNC_MS.
 async function loadHistory() {
-  let delay = 60000;
+  clearTimeout(historyTimer);
+  const requested = hours;
   try {
-    const r = await fetch("/api/history?hours=" + HOURS, { cache: "no-store" });
+    const r = await fetch("/api/history?hours=" + requested, { cache: "no-store" });
     if (!r.ok) throw new Error(r.status);
-    historyData = await r.json();
-    delay = Math.max(10000, historyData.log_period_s * 1000);
-    $("hours").textContent = historyData.hours;
-    $("history-info").textContent = historyData.available
-      ? historyData.records.length + " points, one every " + historyData.log_period_s + " s or more"
-      : "history not available";
+    const d = await r.json();
+    if (requested !== hours) return;  // the period changed meanwhile
+    chart = {
+      bucket: d.bucket_s,
+      gap: 3 * Math.max(d.bucket_s, d.log_period_s),  // longer pauses break the line
+      points: d.records.map((x) => ({ t: x[0], v: [x[1], x[2], x[3]], n: 0 })),
+    };
+    chart.lastAdded = d.records.length ? d.records[d.records.length - 1][0] : 0;
+    $("history-info").textContent = !d.available ? "history not available"
+      : d.bucket_s > d.log_period_s ? "each point is the average of " + fmtDuration(d.bucket_s)
+      : "one point per measurement";
     drawCharts();
   } catch (e) {
     $("history-info").textContent = "history could not be loaded";
   }
-  setTimeout(loadHistory, delay);
+  historyTimer = setTimeout(loadHistory, RESYNC_MS);
+}
+
+// Adds a measurement to the charts without asking the station again. It is
+// averaged into the last point while that point is younger than one bucket,
+// so the number of points stays the same over time.
+function addPoint(t, v) {
+  if (!chart) return;
+  const pts = chart.points;
+  // The page asks at every measurement interval; add each measurement once.
+  if (t <= chart.lastAdded) return;
+  chart.lastAdded = t;
+  const last = pts[pts.length - 1];
+  if (last && last.n > 0 && t - last.start < chart.bucket) {
+    last.v = last.v.map((x, i) => (x * last.n + v[i]) / (last.n + 1));
+    last.t = (last.t * last.n + t) / (last.n + 1);
+    last.n++;
+  } else {
+    pts.push({ t, v, n: 1, start: t });
+  }
+  const cutoff = t - hours * 3600;
+  while (pts.length && pts[0].t < cutoff) pts.shift();
+  drawCharts();
 }
 
 function drawCharts() {
-  if (!historyData) return;
-  const rec = historyData.records;
-  // A pause longer than three log intervals (station off) breaks the line.
-  const gap = historyData.log_period_s * 3;
-  drawChart($("chart-temp"), rec.map((x) => [x[0], x[1]]), "var(--temp)", 1, gap);
-  drawChart($("chart-hum"), rec.map((x) => [x[0], x[2]]), "var(--hum)", 0, gap);
-  drawChart($("chart-pres"), rec.map((x) => [x[0], x[3]]), "var(--pres)", 1, gap);
+  if (!chart) return;
+  const series = (i) => chart.points.map((p) => [p.t, p.v[i]]);
+  drawChart($("chart-temp"), series(0), "var(--temp)", 1, chart.gap);
+  drawChart($("chart-hum"), series(1), "var(--hum)", 0, chart.gap);
+  drawChart($("chart-pres"), series(2), "var(--pres)", 1, chart.gap);
 }
 
 function drawChart(svg, pts, color, digits, gap) {
@@ -160,9 +220,11 @@ function drawChart(svg, pts, color, digits, gap) {
     out += `<text x="${L - 6}" y="${yy}" dy="4" text-anchor="end">${v.toFixed(digits)}</text>`;
   }
   const ticks = W < 420 ? 2 : 4;
+  const days = t1 - t0 > 2 * 86400;              // 7 days: show dates
   for (let i = 0; i <= ticks; i++) {             // time axis
-    const t = t0 + (t1 - t0) * i / ticks;
-    const label = new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const t = t0 + (t1 - t0) * i / ticks, date = new Date(t * 1000);
+    const label = days ? date.toLocaleDateString([], { day: "2-digit", month: "2-digit" })
+                       : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     const anchor = i === 0 ? "start" : i === ticks ? "end" : "middle";
     out += `<text x="${x(t).toFixed(1)}" y="${H - 6}" text-anchor="${anchor}">${label}</text>`;
   }
@@ -176,14 +238,29 @@ function drawChart(svg, pts, color, digits, gap) {
   svg.innerHTML = out;
 }
 
+function selectRange(h) {
+  hours = h;
+  try { localStorage.setItem("chart-hours", String(h)); } catch (e) { /* not essential */ }
+  $("range-label").textContent = RANGES[h];
+  document.querySelectorAll(".ranges button").forEach((b) => {
+    b.setAttribute("aria-pressed", String(Number(b.dataset.hours) === h));
+  });
+  chart = null;
+  loadHistory();
+}
+
+document.querySelectorAll(".ranges button").forEach((b) => {
+  b.addEventListener("click", () => selectRange(Number(b.dataset.hours)));
+});
+
 let resizeTimer;
 window.addEventListener("resize", () => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(drawCharts, 150);
 });
 
+selectRange(hours);
 loadCurrent();
-loadHistory();
 </script>
 </body>
 </html>

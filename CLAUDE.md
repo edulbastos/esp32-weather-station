@@ -24,7 +24,7 @@ The project is built with ESP-IDF (v6.1) and uses FreeRTOS to run sensor measure
 *   `main/net_time.h`, `main/net_time.cpp`: Wi-Fi station with automatic reconnection, signal level for the header icon, and NTP time sync (time of day).
 *   `main/telemetry.h`, `main/telemetry.cpp`: MQTT client and the JSON payload. Auto-reconnect of the client is off: the module reconnects at once when Wi-Fi gets an IP, retries every `MQTT_RECONNECT_MS` while it has one, and does not try while Wi-Fi is down.
 *   `main/history.h`, `main/history.cpp`: Measurement history as a ring buffer of 16-byte records with CRC16 on the `history` partition, and the `log` console command (`info`, `dump [N]`, `clear`).
-*   `main/web_server.h`, `main/web_server.cpp`: HTTP server (`esp_http_server`) started on the first IP address: `/`, `/api/current`, `/api/history?hours=N`, `/history.csv`. Large answers are sent in chunks.
+*   `main/web_server.h`, `main/web_server.cpp`: HTTP server (`esp_http_server`) started on the first IP address: `/`, `/api/current`, `/api/history?hours=N&points=P` (averaged into time buckets), `/history.csv`. Large answers are sent in chunks.
 *   `main/health.h`, `main/health.cpp`: `taskHealth` (gateway ping every `NET_CHECK_PERIOD_MS`, forced Wi-Fi reconnect and then restart when Wi-Fi is associated but dead, health log every `HEALTH_LOG_PERIOD_MS`), the `sys` console command, and the start reason at boot.
 *   `main/web_page.html`: The web page (HTML, CSS and JavaScript in one file, no external resources), embedded in the firmware with `EMBED_FILES`.
 *   `main/idf_component.yml`: external component `espressif/mqtt` from the ESP Component Registry (downloaded into `managed_components/`, not committed).
