@@ -29,6 +29,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "health.h"
 #include "history.h"
 #include "net_time.h"
 #include "ssd1306.h"
@@ -596,6 +597,9 @@ esp_err_t start_console(bool with_history)
         cmd.func = cmd_display;
         err = esp_console_cmd_register(&cmd);
     }
+    if (err == ESP_OK) {
+        err = health::register_console_command();
+    }
     if (err == ESP_OK && with_history) {
         err = history::register_console_command();
     }
@@ -610,6 +614,7 @@ esp_err_t start_console(bool with_history)
 extern "C" void app_main(void)
 {
     ESP_LOGI(TAG, "ESP32 Weather Station starting");
+    health::log_reset_reason();  // NFR-2.4: shows watchdog restarts
     init_status_led();
 
     esp_err_t err = init_i2c_bus();
@@ -664,8 +669,14 @@ extern "C" void app_main(void)
         ESP_LOGW(TAG, "Time of day unavailable: %s", esp_err_to_name(err));
     }
 
+    // NFR-2.3: health log, and the network watchdog when Wi-Fi is used.
+    const bool wifi_ok = err == ESP_OK;
+    if (health::start(wifi_ok) != ESP_OK) {
+        ESP_LOGW(TAG, "taskHealth creation failed, network watchdog disabled");
+    }
+
     // FR-6.1, FR-6.5: MQTT needs Wi-Fi; its failures are not critical either.
-    if (err == ESP_OK) {
+    if (wifi_ok) {
         // FR-8.1, FR-8.6: the web page needs Wi-Fi too and is not critical.
         const esp_err_t web_err = web_server::start(current_for_web);
         if (web_err != ESP_OK) {

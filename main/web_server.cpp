@@ -25,6 +25,7 @@ namespace {
 web_server::CurrentFn s_current = nullptr;
 httpd_handle_t s_server = nullptr;
 std::atomic<bool> s_starting{false};
+std::atomic<uint32_t> s_requests{0};
 
 // Collects the response in a small buffer and sends it in chunks, so large
 // answers (the whole history) never have to fit in RAM.
@@ -202,6 +203,7 @@ using Handler = esp_err_t (*)(httpd_req_t *);
 esp_err_t handle_and_close(httpd_req_t *req)
 {
     httpd_resp_set_hdr(req, "Connection", "close");
+    s_requests++;
     const esp_err_t err = reinterpret_cast<Handler>(req->user_ctx)(req);
     // On failure the server already closes the session itself.
     if (err == ESP_OK) {
@@ -275,5 +277,7 @@ esp_err_t start(CurrentFn current)
     s_current = current;
     return esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, on_got_ip, nullptr);
 }
+
+uint32_t requests_served() { return s_requests; }
 
 }  // namespace web_server

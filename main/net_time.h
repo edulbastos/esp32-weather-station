@@ -20,4 +20,12 @@ bool local_time(struct tm &out);
 // started, 0 = disconnected, 1..3 = connected with weak/fair/good signal.
 int wifi_level();
 
+// Link state for the network watchdog (NFR-2.3): associated with the access
+// point, and holding an IP address.
+bool associated();
+bool has_ip();
+
+// Drops the Wi-Fi association; the usual retry logic connects again.
+esp_err_t force_reconnect();
+
 }  // namespace net_time

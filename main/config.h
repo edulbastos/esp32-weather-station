@@ -100,6 +100,16 @@ constexpr uint32_t    WEB_HISTORY_MAX_HOURS  = 8760;  // limit of /api/history?h
 constexpr uint32_t    WEB_HISTORY_MAX_POINTS = 1440;  // older points are thinned out
 
 // ---------------------------------------------------------------------------
+// System health and network watchdog (NFR-2.3, NFR-2.4)
+// ---------------------------------------------------------------------------
+constexpr uint32_t    HEALTH_LOG_PERIOD_MS = 10 * 60 * 1000;  // health line in the log
+constexpr uint32_t    NET_CHECK_PERIOD_MS  = 60 * 1000;       // gateway ping
+constexpr uint32_t    NET_PING_COUNT       = 3;               // pings per check
+constexpr uint32_t    NET_PING_TIMEOUT_MS  = 1000;
+constexpr int         NET_CHECK_FAILS      = 3;  // failed checks in a row -> Wi-Fi reconnect
+constexpr int         NET_MAX_RECONNECTS   = 2;  // reconnects without recovery -> restart
+
+// ---------------------------------------------------------------------------
 // Status LED (blue LED on GPIO2 of the board), used to signal error mode
 // ---------------------------------------------------------------------------
 constexpr gpio_num_t STATUS_LED_PIN          = GPIO_NUM_2;
@@ -122,6 +132,7 @@ constexpr uint32_t    DISPLAY_TASK_STACK  = 4096;
 constexpr uint32_t    PUBLISH_TASK_STACK  = 4096;
 constexpr uint32_t    LOG_TASK_STACK      = 4096;
 constexpr uint32_t    CONSOLE_TASK_STACK  = 6144;  // `log dump` formats floats
+constexpr uint32_t    HEALTH_TASK_STACK   = 4096;
 constexpr uint32_t    WEB_TASK_STACK      = 6144;  // JSON/CSV formatting + 1 KB send buffer
 constexpr UBaseType_t MEASURE_TASK_PRIO   = 5;
 constexpr UBaseType_t DISPLAY_TASK_PRIO   = 4;
@@ -129,6 +140,7 @@ constexpr UBaseType_t PUBLISH_TASK_PRIO   = 3;
 constexpr UBaseType_t LOG_TASK_PRIO       = 3;
 constexpr UBaseType_t CONSOLE_TASK_PRIO   = 2;
 constexpr UBaseType_t WEB_TASK_PRIO       = 2;
+constexpr UBaseType_t HEALTH_TASK_PRIO    = 2;
 
 // Max time a task waits for a mutex before giving up on the current cycle
 constexpr uint32_t    MUTEX_TIMEOUT_MS    = 500;

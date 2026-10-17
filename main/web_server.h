@@ -26,4 +26,7 @@ using CurrentFn = bool (*)(Current &out);
 // Must be called after net_time::start() succeeded.
 esp_err_t start(CurrentFn current);
 
+// Requests answered since start-up, for the `sys` console command.
+uint32_t requests_served();
+
 }  // namespace web_server

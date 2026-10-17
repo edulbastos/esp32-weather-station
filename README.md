@@ -134,6 +134,12 @@ To save the CSV on the PC, press `Ctrl+T` then `Ctrl+L` in the monitor before `l
 
 > **Updating from v1.5.0 or earlier:** v1.6.0 uses its own partition table (`partitions.csv`). New checkouts get it from `sdkconfig.defaults`; in an existing local `sdkconfig`, choose it in `idf.py menuconfig` → "Partition Table" → "Custom partition table CSV" (file `partitions.csv`). `idf.py flash` writes the new table; the Wi-Fi settings are not lost.
 
+## Troubleshooting
+
+In the serial monitor, `sys` shows the uptime, why the station last started, the free memory, the Wi-Fi link (signal, IP, gateway), when the gateway last answered a ping, the MQTT state and how many web requests were served. Every 10 minutes the same figures appear in the log as a `health:` line.
+
+If Wi-Fi stays associated but no traffic gets through, the station notices it within about 3 minutes (it pings the router every minute), reconnects Wi-Fi, and after two reconnections without success restarts itself. The history in flash is kept. After a restart, the first log lines show the reason (`health: Started by: software restart`).
+
 ## Configuration
 
 The measurement interval (1 to 3600 s, default 2 s), the Wi-Fi credentials, and the MQTT broker URI, user, password and publish interval (1 to 86400 s, default 60 s), the history log interval (1 to 86400 s, default 60 s), and the display switch-off after inactivity (0 to 1440 min, default 5 min) are set with `idf.py menuconfig` in the "Weather Station" menu.
@@ -154,12 +160,13 @@ The flash layout is in [partitions.csv](partitions.csv).
 
 ## Architecture
 
-The firmware runs four FreeRTOS tasks, plus the serial console:
+The firmware runs five FreeRTOS tasks, plus the serial console:
 
 - **`taskMeasure`**: reads the BME280 at the measurement interval (2 s by default).
 - **`taskDisplay`**: refreshes the display every 1 s, and right away when a new measurement arrives, with a measurement dot, the date and time and a Wi-Fi signal icon in the header.
 - **`taskPublish`**: sends the latest reading to the MQTT broker at the publish interval (60 s by default), only when the broker is configured.
 - **`taskLog`**: stores the latest reading in the flash history at the log interval (60 s by default).
+- **`taskHealth`**: pings the router every minute and recovers a stuck network, and logs a health line every 10 minutes.
 
 The HTTP server (`web_server`) runs in its own ESP-IDF task once Wi-Fi has an IP address.
 
@@ -178,6 +185,7 @@ main/
 ├── telemetry.*   # MQTT client, JSON payload
 ├── history.*     # measurement history in flash + `log` console command
 ├── web_server.*  # HTTP server: page, JSON and CSV
+├── health.*      # health log, `sys` command, network watchdog
 ├── web_page.html # the web page, embedded in the firmware
 ├── idf_component.yml  # external component: espressif/mqtt
 └── Kconfig.projbuild  # menuconfig menu: intervals, Wi-Fi, MQTT broker

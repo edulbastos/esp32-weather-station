@@ -19,4 +19,8 @@ esp_err_t start();
 // Returns ESP_ERR_INVALID_STATE while not connected to the broker.
 esp_err_t publish(const Bme280Data &data, time_t sample_time);
 
+// For the `sys` console command: client created, and connected to the broker.
+bool enabled();
+bool connected();
+
 }  // namespace telemetry

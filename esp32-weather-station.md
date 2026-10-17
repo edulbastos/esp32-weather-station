@@ -1,6 +1,6 @@
 # Functional Specification: ESP32 Weather Station
 
-**Version:** 1.8.1
+**Version:** 1.8.2
 
 ## Document Control
 
@@ -19,6 +19,7 @@
 | 1.7.1   | 2026-10-16 | MQTT reconnection follows the Wi-Fi state: immediate after Wi-Fi returns, no attempts while it is down (FR-6.5 changed). |
 | 1.8.0   | 2026-10-16 | Energy saving: display on/off with the BOOT button and the console, automatic switch-off after inactivity (FR-9.1, FR-9.2). |
 | 1.8.1   | 2026-10-16 | Web page tab icon, `/favicon.ico` no longer answers 404 (FR-8.2 changed); one request per HTTP connection, so idle browser connections no longer cause "error in recv" warnings (FR-8.6 changed). |
+| 1.8.2   | 2026-10-16 | Reliability: network watchdog for Wi-Fi associated without traffic, health log and `sys` console command, start reason in the log (NFR-2.3, NFR-2.4). |
 
 ### Requirement Markers
 *   **`[PROPOSED]`**: The requirement is new and not implemented yet.
@@ -123,6 +124,8 @@ This section gathers the requirements that reduce the power consumption, in view
 ### 4.2 Reliability
 *   **NFR-2.1:** The system MUST operate without interruption over extended periods (weeks/months).
 *   **NFR-2.2:** I2C communication errors SHOULD be handled robustly to prevent system crashes.
+*   **NFR-2.3:** [v1.8.2] The system MUST detect when Wi-Fi is associated but no traffic gets through, and recover from it (detail of NFR-2.1). Every 60 s it pings the default gateway (3 pings). A check fails when Wi-Fi is associated and either has no IP address or the gateway does not answer; 3 failed checks in a row force a Wi-Fi reconnection. The watchdog only acts after the gateway has answered at least once, since some routers do not answer ping; while not associated, the usual reconnection (FR-5.5) applies. All values are in `main/config.h`.
+*   **NFR-2.4:** [v1.8.2] If the network is still down after 2 forced Wi-Fi reconnections, the system MUST restart; the history (FR-7.3) survives. To help diagnose such failures, the system logs the start reason at boot (power-on, software restart, watchdog, brownout...), logs a health line every 10 minutes (free heap, minimum free heap, largest free block, Wi-Fi signal, MQTT state, web requests served), and offers the console command `sys` with the uptime, start reason, heap, Wi-Fi link, IP and gateway, last gateway reply, MQTT state and web requests served.
 
 ### 4.3 Maintainability
 *   **NFR-3.1:** The code MUST be modular and easy to understand, divided into logical modules (header and source files) within the ESP-IDF `main` component.
@@ -165,6 +168,7 @@ This section gathers the requirements that reduce the power consumption, in view
     *   `net_time.h` / `net_time.cpp` (Wi-Fi connection with automatic reconnection and signal level, and NTP time synchronization)
     *   `telemetry.h` / `telemetry.cpp` (MQTT client and JSON payload)
     *   `history.h` / `history.cpp` (measurement history ring buffer in flash and the `log` console command)
+    *   `health.h` / `health.cpp` (health log, `sys` console command and network watchdog)
     *   `web_server.h` / `web_server.cpp`, `web_page.html` (HTTP server and the page embedded in the firmware)
     *   `config.h` (central configuration)
     *   `Kconfig.projbuild` ("Weather Station" menu in `idf.py menuconfig` for the measurement interval, the Wi-Fi credentials, the MQTT broker and the history log interval)
@@ -188,6 +192,7 @@ This section gathers the requirements that reduce the power consumption, in view
 *   The serial interface is used for debug output at 115200 baud (ESP-IDF console UART, viewed with `idf.py monitor`).
 *   [v1.6.0] Interactive console on the same UART (prompt `weather> `): `help`, `log info`, `log dump [N]`, `log clear` (see FR-7.4, FR-7.5).
 *   [v1.8.0] Console commands `display on`, `display off`, `display status` (see FR-9.1).
+*   [v1.8.2] Console command `sys`: system health (see NFR-2.4).
 
 ### 6.4 Network Interface
 *   **Wi-Fi:** 2.4 GHz station mode (WPA2-PSK, or an open network if no password is set).

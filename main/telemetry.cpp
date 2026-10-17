@@ -139,6 +139,10 @@ esp_err_t start()
     return err;
 }
 
+bool enabled() { return s_client != nullptr; }
+
+bool connected() { return s_connected; }
+
 esp_err_t publish(const Bme280Data &data, time_t sample_time)
 {
     if (!s_connected) {

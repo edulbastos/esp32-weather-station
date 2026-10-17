@@ -20,7 +20,8 @@ namespace {
 
 std::atomic<bool> s_synced{false};
 std::atomic<bool> s_started{false};
-std::atomic<bool> s_connected{false};
+std::atomic<bool> s_connected{false};   // has an IP address
+std::atomic<bool> s_associated{false};  // associated with the access point
 TimerHandle_t s_retry_timer = nullptr;
 
 void retry_connect(TimerHandle_t)
@@ -32,9 +33,12 @@ void on_event(void *, esp_event_base_t base, int32_t id, void *data)
 {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
+    } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_CONNECTED) {
+        s_associated = true;
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         // FR-5.5: keep trying, but not in a tight loop.
         s_connected = false;
+        s_associated = false;
         const auto *info = static_cast<wifi_event_sta_disconnected_t *>(data);
         ESP_LOGW(TAG, "Wi-Fi disconnected (reason %d), retrying in %lu ms", info->reason,
                  static_cast<unsigned long>(config::WIFI_RETRY_DELAY_MS));
@@ -147,6 +151,18 @@ int wifi_level()
         return 3;
     }
     return ap.rssi >= config::WIFI_RSSI_FAIR_DBM ? 2 : 1;
+}
+
+bool associated() { return s_associated; }
+
+bool has_ip() { return s_connected; }
+
+esp_err_t force_reconnect()
+{
+    if (!s_started) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    return esp_wifi_disconnect();  // -> WIFI_EVENT_STA_DISCONNECTED -> retry
 }
 
 }  // namespace net_time

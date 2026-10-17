@@ -25,6 +25,7 @@ The project is built with ESP-IDF (v6.1) and uses FreeRTOS to run sensor measure
 *   `main/telemetry.h`, `main/telemetry.cpp`: MQTT client and the JSON payload. Auto-reconnect of the client is off: the module reconnects at once when Wi-Fi gets an IP, retries every `MQTT_RECONNECT_MS` while it has one, and does not try while Wi-Fi is down.
 *   `main/history.h`, `main/history.cpp`: Measurement history as a ring buffer of 16-byte records with CRC16 on the `history` partition, and the `log` console command (`info`, `dump [N]`, `clear`).
 *   `main/web_server.h`, `main/web_server.cpp`: HTTP server (`esp_http_server`) started on the first IP address: `/`, `/api/current`, `/api/history?hours=N`, `/history.csv`. Large answers are sent in chunks.
+*   `main/health.h`, `main/health.cpp`: `taskHealth` (gateway ping every `NET_CHECK_PERIOD_MS`, forced Wi-Fi reconnect and then restart when Wi-Fi is associated but dead, health log every `HEALTH_LOG_PERIOD_MS`), the `sys` console command, and the start reason at boot.
 *   `main/web_page.html`: The web page (HTML, CSS and JavaScript in one file, no external resources), embedded in the firmware with `EMBED_FILES`.
 *   `main/idf_component.yml`: external component `espressif/mqtt` from the ESP Component Registry (downloaded into `managed_components/`, not committed).
 *   `main/Kconfig.projbuild`: "Weather Station" menuconfig menu for the measurement interval, the Wi-Fi credentials, the MQTT broker and publish interval, and the history log interval.
@@ -62,12 +63,13 @@ The Arduino libraries (`Wire.h`, `Adafruit_GFX.h`, `Adafruit_SSD1306.h`, `Adafru
 *   All configurable values belong in `main/config.h`; do not hard-code them elsewhere. Exceptions come from Kconfig (`idf.py menuconfig`) and are read into `config.h`: the measurement, MQTT publish and history log intervals, the display switch-off time, and per-installation settings and secrets (Wi-Fi credentials, MQTT broker URI and credentials), which are never committed.
 *   Use `ESP_LOGI`/`ESP_LOGW`/`ESP_LOGE` for serial output and return `esp_err_t` from driver functions.
 
-The code is divided into four tasks:
+The code is divided into five tasks:
 
 *   **`taskMeasure`:** Measures the weather data from the BME280 sensor at the measurement interval (`CONFIG_WS_MEASURE_PERIOD_S`, default 2 seconds).
 *   **`taskDisplay`:** Updates the OLED display with the current weather data every 1 second. `taskMeasure` also wakes it with a task notification on each new measurement, so the measurement icon appears immediately and is cleared after `MEASURE_ICON_MS`. It also owns the display power (FR-9.x): the BOOT button ISR and the `display` console command post a request in `s_display_request` and notify it; it switches the panel off after `CONFIG_WS_DISPLAY_TIMEOUT_MIN` without interaction, and while off it draws nothing and sleeps until notified.
 *   **`taskPublish`:** Sends the latest valid measurement to the MQTT broker at the publish interval (`CONFIG_WS_MQTT_PUBLISH_PERIOD_S`, default 60 seconds). Created only when Wi-Fi and a broker URI are configured.
 *   **`taskLog`:** Stores the latest valid measurement in the flash history at the log interval (`CONFIG_WS_LOG_PERIOD_S`, default 60 seconds).
+*   **`taskHealth`:** Network watchdog and health log (NFR-2.3, NFR-2.4), see `main/health.cpp`.
 
 The HTTP server runs in its own ESP-IDF task and reads the current data through `current_for_web()` in `main.cpp` (under `dataMutex`) and the history through `history::visit()`.
 
