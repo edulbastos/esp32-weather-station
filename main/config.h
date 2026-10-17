@@ -67,6 +67,10 @@ constexpr const char *TIMEZONE            = "<-03>3";
 // >= GOOD -> 3 arcs, >= FAIR -> 2 arcs, below -> 1 arc
 constexpr int8_t      WIFI_RSSI_GOOD_DBM  = -60;
 constexpr int8_t      WIFI_RSSI_FAIR_DBM  = -70;
+// Wi-Fi modem power save (radio sleeps between beacons). With some routers
+// the station then stops receiving while it can still send; off by default
+// on mains power. Turn on to save energy (e.g. on battery).
+constexpr bool        WIFI_POWER_SAVE     = false;
 
 // ---------------------------------------------------------------------------
 // Data transmission via MQTT (FR-6.x)
@@ -80,6 +84,8 @@ constexpr const char *MQTT_TOPIC          = "weather-station/data";
 constexpr int         MQTT_QOS            = 0;     // 0 = at most once
 constexpr bool        MQTT_RETAIN         = true;  // new subscribers get the last reading
 constexpr uint32_t    MQTT_RECONNECT_MS   = 10000;
+// Client ID = prefix + last 3 bytes of the Wi-Fi MAC, e.g. weather-station-51a842
+constexpr const char *MQTT_CLIENT_ID_PREFIX = "weather-station-";
 
 // ---------------------------------------------------------------------------
 // Measurement history in the internal flash (FR-7.x)
@@ -105,8 +111,8 @@ constexpr uint32_t    WEB_HISTORY_MAX_POINTS = 1440;  // limit of /api/history?p
 // ---------------------------------------------------------------------------
 constexpr uint32_t    HEALTH_LOG_PERIOD_MS = 10 * 60 * 1000;  // health line in the log
 constexpr uint32_t    NET_CHECK_PERIOD_MS  = 60 * 1000;       // gateway ping
-constexpr uint32_t    NET_PING_COUNT       = 3;               // pings per check
-constexpr uint32_t    NET_PING_TIMEOUT_MS  = 1000;
+constexpr uint32_t    NET_PING_COUNT       = 5;     // pings per check; one reply is enough
+constexpr uint32_t    NET_PING_TIMEOUT_MS  = 2000;
 constexpr int         NET_CHECK_FAILS      = 3;  // failed checks in a row -> Wi-Fi reconnect
 constexpr int         NET_MAX_RECONNECTS   = 2;  // reconnects without recovery -> restart
 

@@ -6,6 +6,7 @@
 #include "config.h"
 #include "esp_event.h"
 #include "esp_log.h"
+#include "esp_mac.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
@@ -21,6 +22,7 @@ namespace {
 // does not try at all while Wi-Fi is down, and reconnects at once when the
 // IP address comes back.
 esp_mqtt_client_handle_t s_client = nullptr;
+char s_client_id[40] = "";
 TimerHandle_t s_retry_timer = nullptr;
 std::atomic<bool> s_client_started{false};
 std::atomic<bool> s_connected{false};
@@ -44,7 +46,7 @@ void on_mqtt_event(void *, esp_event_base_t, int32_t id, void *)
 {
     switch (static_cast<esp_mqtt_event_id_t>(id)) {
     case MQTT_EVENT_CONNECTED:
-        ESP_LOGI(TAG, "Connected to MQTT broker %s", config::MQTT_BROKER_URI);
+        ESP_LOGI(TAG, "Connected to MQTT broker %s as \"%s\"", config::MQTT_BROKER_URI, s_client_id);
         s_connected = true;
         break;
     case MQTT_EVENT_DISCONNECTED: {
@@ -118,6 +120,13 @@ esp_err_t start()
     }
     cfg.network.disable_auto_reconnect = true;
 
+    // Fixed, readable client ID, unique per board (from the MAC address).
+    uint8_t mac[6] = {};
+    esp_read_mac(mac, ESP_MAC_WIFI_STA);
+    snprintf(s_client_id, sizeof(s_client_id), "%s%02x%02x%02x", config::MQTT_CLIENT_ID_PREFIX, mac[3], mac[4],
+             mac[5]);
+    cfg.credentials.client_id = s_client_id;
+
     s_client = esp_mqtt_client_init(&cfg);
     if (s_client == nullptr) {
         return ESP_FAIL;
@@ -142,6 +151,8 @@ esp_err_t start()
 bool enabled() { return s_client != nullptr; }
 
 bool connected() { return s_connected; }
+
+const char *client_id() { return s_client_id; }
 
 esp_err_t publish(const Bme280Data &data, time_t sample_time)
 {

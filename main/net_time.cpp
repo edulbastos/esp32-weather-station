@@ -118,6 +118,12 @@ esp_err_t start()
     }
     s_started = true;
 
+    // NFR-2.3: power save can make the station deaf with some routers.
+    if ((err = esp_wifi_set_ps(config::WIFI_POWER_SAVE ? WIFI_PS_MIN_MODEM : WIFI_PS_NONE)) != ESP_OK) {
+        return err;
+    }
+    ESP_LOGI(TAG, "Wi-Fi power save %s", config::WIFI_POWER_SAVE ? "on (modem sleep)" : "off");
+
     // FR-5.1: SNTP retries and re-syncs periodically on its own.
     esp_sntp_config_t sntp_cfg = ESP_NETIF_SNTP_DEFAULT_CONFIG(config::NTP_SERVER);
     sntp_cfg.sync_cb = on_time_sync;

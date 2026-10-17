@@ -136,9 +136,11 @@ To save the CSV on the PC, press `Ctrl+T` then `Ctrl+L` in the monitor before `l
 
 ## Troubleshooting
 
-In the serial monitor, `sys` shows the uptime, why the station last started, the free memory, the Wi-Fi link (signal, IP, gateway), when the gateway last answered a ping, the MQTT state and how many web requests were served. Every 10 minutes the same figures appear in the log as a `health:` line.
+In the serial monitor, `sys` shows the uptime, why the station last started, the free memory, the Wi-Fi link (signal, IP, gateway), the network watchdog (last sign of traffic and where it came from), the MQTT state and how many web requests were served. Every 10 minutes the same figures appear in the log as a `health:` line.
 
-If Wi-Fi stays associated but no traffic gets through, the station notices it within about 3 minutes (it pings the router every minute), reconnects Wi-Fi, and after two reconnections without success restarts itself. The history in flash is kept. After a restart, the first log lines show the reason (`health: Started by: software restart`).
+If Wi-Fi stays associated but no traffic gets through, the station notices it within about 3 minutes (every minute it looks for MQTT or web traffic, and pings the router only when there is none), reconnects Wi-Fi, and after two reconnections without success restarts itself. The history in flash is kept. After a restart, the first log lines show the reason (`health: Started by: software restart`).
+
+The MQTT client ID is `weather-station-` followed by the last 6 hex digits of the board's MAC address; it appears in the `Connected to MQTT broker ... as "..."` log line and in `sys`, which helps to find the station in the broker's log.
 
 ## Configuration
 
@@ -152,7 +154,8 @@ All other tunable parameters live in [main/config.h](main/config.h):
 - sea-level pressure used for the altitude estimate;
 - task periods, stack sizes and priorities;
 - NTP server, time zone (default UTC-3), Wi-Fi retry interval and signal icon thresholds;
-- MQTT topic, QoS, retain flag and reconnect interval;
+- MQTT topic, QoS, retain flag, reconnect interval and client ID prefix;
+- Wi-Fi power save (off by default: some routers stop delivering packets to a sleeping ESP32);
 - history partition label and console prompt;
 - web server port, chart window, maximum points and connections.
 

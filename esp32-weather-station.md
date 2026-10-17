@@ -1,6 +1,6 @@
 # Functional Specification: ESP32 Weather Station
 
-**Version:** 1.8.3
+**Version:** 1.8.4
 
 ## Document Control
 
@@ -21,6 +21,7 @@
 | 1.8.1   | 2026-10-16 | Web page tab icon, `/favicon.ico` no longer answers 404 (FR-8.2 changed); one request per HTTP connection, so idle browser connections no longer cause "error in recv" warnings (FR-8.6 changed). |
 | 1.8.2   | 2026-10-16 | Reliability: network watchdog for Wi-Fi associated without traffic, health log and `sys` console command, start reason in the log (NFR-2.3, NFR-2.4). |
 | 1.8.3   | 2026-10-16 | Web charts: 1 h / 24 h / 7 d periods, about 150 averaged points, incremental update between full reloads (FR-8.4 changed). |
+| 1.8.4   | 2026-10-16 | Network watchdog: MQTT and web traffic count as signs of a working network, gateway ping only as last resort (NFR-2.3 changed); Wi-Fi power save off by default; fixed, readable MQTT client ID shown in the log and in `sys`. |
 
 ### Requirement Markers
 *   **`[PROPOSED]`**: The requirement is new and not implemented yet.
@@ -125,8 +126,8 @@ This section gathers the requirements that reduce the power consumption, in view
 ### 4.2 Reliability
 *   **NFR-2.1:** The system MUST operate without interruption over extended periods (weeks/months).
 *   **NFR-2.2:** I2C communication errors SHOULD be handled robustly to prevent system crashes.
-*   **NFR-2.3:** [v1.8.2] The system MUST detect when Wi-Fi is associated but no traffic gets through, and recover from it (detail of NFR-2.1). Every 60 s it pings the default gateway (3 pings). A check fails when Wi-Fi is associated and either has no IP address or the gateway does not answer; 3 failed checks in a row force a Wi-Fi reconnection. The watchdog only acts after the gateway has answered at least once, since some routers do not answer ping; while not associated, the usual reconnection (FR-5.5) applies. All values are in `main/config.h`.
-*   **NFR-2.4:** [v1.8.2] If the network is still down after 2 forced Wi-Fi reconnections, the system MUST restart; the history (FR-7.3) survives. To help diagnose such failures, the system logs the start reason at boot (power-on, software restart, watchdog, brownout...), logs a health line every 10 minutes (free heap, minimum free heap, largest free block, Wi-Fi signal, MQTT state, web requests served), and offers the console command `sys` with the uptime, start reason, heap, Wi-Fi link, IP and gateway, last gateway reply, MQTT state and web requests served.
+*   **NFR-2.3:** [v1.8.2, CHANGED v1.8.4] The system MUST detect when Wi-Fi is associated but no traffic gets through, and recover from it (detail of NFR-2.1). Every 60 s it checks for a sign of traffic: the MQTT client is connected (its keepalive proves round trips to the broker), the web server answered a request since the last check, or the default gateway answers at least one of 5 pings (2 s timeout each); the ping is only used when the other signs are missing. A check fails when Wi-Fi is associated and either has no IP address or shows no sign of traffic; 3 failed checks in a row force a Wi-Fi reconnection. The watchdog only acts after the gateway has answered ping at least once (until then it pings at every check), since some routers do not answer ping; while not associated, the usual reconnection (FR-5.5) applies. All values are in `main/config.h`. Before v1.8.4: "The system MUST detect when Wi-Fi is associated but no traffic gets through, and recover from it (detail of NFR-2.1). Every 60 s it pings the default gateway (3 pings). A check fails when Wi-Fi is associated and either has no IP address or the gateway does not answer; 3 failed checks in a row force a Wi-Fi reconnection. The watchdog only acts after the gateway has answered at least once, since some routers do not answer ping; while not associated, the usual reconnection (FR-5.5) applies. All values are in `main/config.h`." A router that occasionally ignored ping could then cause needless Wi-Fi reconnections while MQTT and the web page were working.
+*   **NFR-2.4:** [v1.8.2] If the network is still down after 2 forced Wi-Fi reconnections, the system MUST restart; the history (FR-7.3) survives. To help diagnose such failures, the system logs the start reason at boot (power-on, software restart, watchdog, brownout...), logs a health line every 10 minutes (free heap, minimum free heap, largest free block, Wi-Fi signal, MQTT state, web requests served), and offers the console command `sys` with the uptime, start reason, heap, Wi-Fi link, IP and gateway, watchdog state with the last sign of traffic and its source (since v1.8.4; before: last gateway reply), MQTT state and web requests served.
 
 ### 4.3 Maintainability
 *   **NFR-3.1:** The code MUST be modular and easy to understand, divided into logical modules (header and source files) within the ESP-IDF `main` component.
@@ -198,8 +199,9 @@ This section gathers the requirements that reduce the power consumption, in view
 ### 6.4 Network Interface
 *   **Wi-Fi:** 2.4 GHz station mode (WPA2-PSK, or an open network if no password is set).
 *   **Wi-Fi:** [v1.2.0] Add a symbol to indicate WiFi connectivity in the yellow area (see FR-5.7).
+*   **Wi-Fi power save:** [v1.8.4] Off by default (`WIFI_POWER_SAVE` in `main/config.h`). With modem power save on (the ESP-IDF default up to v1.8.3), the station stopped receiving with some routers while it could still send; turning it on saves energy, which matters for a battery supply (section 3.9).
 *   **NTP:** SNTP client (UDP port 123), default server `pool.ntp.org`.
-*   **MQTT:** [v1.5.0] Client publishing the weather data as JSON to the configured broker (TCP 1883 for `mqtt://`, 8883 for `mqtts://`), topic `weather-station/data` (see FR-6.1 to FR-6.6).
+*   **MQTT:** [v1.5.0] Client publishing the weather data as JSON to the configured broker (TCP 1883 for `mqtt://`, 8883 for `mqtts://`), topic `weather-station/data` (see FR-6.1 to FR-6.6). [v1.8.4] Client ID `weather-station-` plus the last 3 bytes of the Wi-Fi MAC address (e.g. `weather-station-51a842`), shown when the client connects and by `sys`; before v1.8.4 the ESP-MQTT default `ESP32_` plus the same bytes.
 *   **HTTP:** [v1.7.0] Server on TCP port 80: `/`, `/api/current`, `/api/history?hours=N&points=P`, `/history.csv`, and `/favicon.ico` (empty answer, since v1.8.1) (see FR-8.1 to FR-8.6).
 
 ### 6.5 Web Interface

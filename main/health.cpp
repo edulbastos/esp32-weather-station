@@ -27,7 +27,9 @@ TaskHandle_t s_task = nullptr;
 
 // Network watchdog state, also shown by `sys`.
 std::atomic<bool> s_gateway_seen{false};   // armed once the gateway answered
-std::atomic<int64_t> s_last_reply_us{0};    // esp_timer time of the last reply
+std::atomic<int64_t> s_last_ok_us{0};       // esp_timer time of the last sign of traffic
+std::atomic<const char *> s_last_ok_source{"none"};
+uint32_t s_last_web_requests = 0;
 std::atomic<int> s_failed_checks{0};
 std::atomic<int> s_forced_reconnects{0};
 
@@ -95,9 +97,13 @@ int ping_gateway()
     return replies;
 }
 
-// NFR-2.3: one watchdog step. Counts a failure when Wi-Fi is associated but
-// has no IP address, or has one and the gateway does not answer. Not
-// associated (access point away) is left to the usual reconnection.
+// NFR-2.3: one watchdog step. The network counts as working when there is a
+// sign of traffic: the MQTT client is connected (its keepalive proves round
+// trips to the broker), the web server answered a request since the last
+// check, or the gateway answers ping. Some routers drop ping now and then, so
+// the ping is only the last resort. A check fails when Wi-Fi is associated and
+// has no IP address or shows no sign of traffic. Not associated (access point
+// away) is left to the usual reconnection.
 void check_network()
 {
     if (!net_time::associated()) {
@@ -105,18 +111,28 @@ void check_network()
         return;
     }
 
-    bool ok = false;
+    const char *source = nullptr;
     if (net_time::has_ip()) {
-        const int replies = ping_gateway();
-        if (replies > 0) {
-            ok = true;
-            s_last_reply_us = esp_timer_get_time();
-            if (!s_gateway_seen.exchange(true)) {
-                ESP_LOGI(TAG, "Gateway answers ping, network watchdog armed");
-            }
+        const uint32_t requests = web_server::requests_served();
+        // Until armed, ping on every check so that a router that answers ping
+        // is detected even while MQTT keeps the checks passing.
+        if (!s_gateway_seen && ping_gateway() > 0) {
+            s_gateway_seen = true;
+            ESP_LOGI(TAG, "Gateway answers ping, network watchdog armed");
+            source = "gateway ping";
+        } else if (telemetry::connected()) {
+            source = "MQTT";
+        } else if (requests != s_last_web_requests) {
+            source = "web";
+        } else if (s_gateway_seen && ping_gateway() > 0) {
+            source = "gateway ping";
         }
+        s_last_web_requests = requests;
     }
+    const bool ok = source != nullptr;
     if (ok) {
+        s_last_ok_us = esp_timer_get_time();
+        s_last_ok_source = source;
         if (s_failed_checks > 0 || s_forced_reconnects > 0) {
             ESP_LOGI(TAG, "Network back");
         }
@@ -133,7 +149,7 @@ void check_network()
     const int fails = ++s_failed_checks;
     const Heap h = heap_now();
     ESP_LOGW(TAG, "Wi-Fi associated but %s (%d/%d), heap free %u KB, min %u KB",
-             net_time::has_ip() ? "gateway not answering" : "no IP address", fails,
+             net_time::has_ip() ? "no traffic (MQTT down, no web request, no ping reply)" : "no IP address", fails,
              config::NET_CHECK_FAILS, h.free_kb, h.min_kb);
     if (fails < config::NET_CHECK_FAILS) {
         return;
@@ -228,17 +244,25 @@ int cmd_sys(int, char **)
         if (net_time::associated() && esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
             printf(", RSSI %d dBm, channel %u", ap.rssi, ap.primary);
         }
+        wifi_ps_type_t ps = WIFI_PS_NONE;
+        esp_wifi_get_ps(&ps);
+        printf(", power save %s", ps == WIFI_PS_NONE ? "off" : "on");
         printf("\nIP " IPSTR ", gateway " IPSTR "\n", IP2STR(&info.ip), IP2STR(&info.gw));
 
-        const int64_t last = s_last_reply_us;
-        if (last == 0) {
-            printf("Gateway ping: no reply yet (watchdog %s)\n", s_gateway_seen ? "armed" : "not armed");
-        } else {
-            printf("Gateway ping: last reply %lld s ago, failed checks %d, forced reconnects %d\n",
-                   (esp_timer_get_time() - last) / 1000000, s_failed_checks.load(), s_forced_reconnects.load());
+        const int64_t last = s_last_ok_us;
+        printf("Network watchdog: %s", s_gateway_seen ? "armed" : "not armed (gateway has not answered ping yet)");
+        if (last != 0) {
+            printf(", last sign of traffic %lld s ago (%s)", (esp_timer_get_time() - last) / 1000000,
+                   s_last_ok_source.load());
         }
+        printf(", failed checks %d, forced reconnects %d\n", s_failed_checks.load(), s_forced_reconnects.load());
     }
-    printf("MQTT: %s\n", !telemetry::enabled() ? "off" : telemetry::connected() ? "connected" : "disconnected");
+    if (telemetry::enabled()) {
+        printf("MQTT: %s, client ID \"%s\"\n", telemetry::connected() ? "connected" : "disconnected",
+               telemetry::client_id());
+    } else {
+        printf("MQTT: off\n");
+    }
     printf("Web: %lu requests served\n", static_cast<unsigned long>(web_server::requests_served()));
     return 0;
 }
