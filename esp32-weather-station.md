@@ -1,6 +1,6 @@
 # Functional Specification: ESP32 Weather Station
 
-**Version:** 1.8.0
+**Version:** 1.8.1
 
 ## Document Control
 
@@ -18,6 +18,7 @@
 | 1.7.0   | 2026-10-16 | Web page on the local network with current values, history charts and CSV download (FR-8.1 to FR-8.6). |
 | 1.7.1   | 2026-10-16 | MQTT reconnection follows the Wi-Fi state: immediate after Wi-Fi returns, no attempts while it is down (FR-6.5 changed). |
 | 1.8.0   | 2026-10-16 | Energy saving: display on/off with the BOOT button and the console, automatic switch-off after inactivity (FR-9.1, FR-9.2). |
+| 1.8.1   | 2026-10-16 | Web page tab icon, `/favicon.ico` no longer answers 404 (FR-8.2 changed); one request per HTTP connection, so idle browser connections no longer cause "error in recv" warnings (FR-8.6 changed). |
 
 ### Requirement Markers
 *   **`[PROPOSED]`**: The requirement is new and not implemented yet.
@@ -101,11 +102,11 @@ The main goal is to provide a weather station that is easy to build and use, del
 
 ### 3.8 Web Page
 *   **FR-8.1** [v1.7.0]: The system MUST serve a web page on the local network over HTTP (port 80), reached by the IP address of the station. The server starts once Wi-Fi has an IP address, and the URL (`Web page at http://<ip>/`) is logged on the serial console on every connection. There is no name resolution (mDNS) and no password: the page is read-only and offers no action that changes the station. This implements the "Web server" extension proposed in section 7 up to v1.6.0.
-*   **FR-8.2** [v1.7.0]: The page (`/`) MUST show the current temperature, humidity and pressure, the time of the measurement and the Wi-Fi signal level, refreshed at the measurement interval (at least every 1 s). It MUST work without internet access (no external files) and adapt to phone screens and to the light/dark setting of the browser.
+*   **FR-8.2** [v1.7.0, CHANGED v1.8.1]: The page (`/`) MUST show the current temperature, humidity and pressure, the time of the measurement and the Wi-Fi signal level, refreshed at the measurement interval (at least every 1 s). It MUST work without internet access (no external files) and adapt to phone screens and to the light/dark setting of the browser. Since v1.8.1 the page carries its own tab icon (embedded SVG), and `/favicon.ico` answers `204 No Content`, so browsers no longer cause a 404 warning on the serial console; before v1.8.1 the page had no icon and `/favicon.ico` answered 404.
 *   **FR-8.3** [v1.7.0]: `/api/current` MUST return the current values as JSON: `valid`, `time` (Unix time of the measurement, `null` before NTP sync), `age_s`, `temperature_c`, `humidity_rh`, `pressure_hpa`, `wifi_level` (FR-5.7), `measure_period_s` and `log_period_s`. With `valid` false, the measurement fields are left out.
 *   **FR-8.4** [v1.7.0]: The page MUST show charts of temperature, humidity and pressure over the last 24 hours (`main/config.h`), taken from the measurement history (FR-7.1) and refreshed at the log interval (at least every 10 s). A pause longer than three log intervals breaks the line. The data come from `/api/history?hours=N` (N from 1 to 8760, default 24) as JSON: `hours`, `log_period_s`, `available` and `records`, a list of `[time, temperature_c, humidity_rh, pressure_hpa]`; at most 1440 records, evenly thinned out; records without a time are left out.
 *   **FR-8.5** [v1.7.0]: `/history.csv` MUST download the whole history as a CSV file, in the format of `log dump` (FR-7.4). The server handles one request at a time, so other requests wait while the download runs.
-*   **FR-8.6** [v1.7.0]: The web page MUST NOT be critical: it needs Wi-Fi (FR-5.6) and is disabled without an SSID; server failures only log a warning (`ESP_LOGW`). At most 4 connections are open at once; a new client closes the least recently used one.
+*   **FR-8.6** [v1.7.0, CHANGED v1.8.1]: The web page MUST NOT be critical: it needs Wi-Fi (FR-5.6) and is disabled without an SSID; server failures only log a warning (`ESP_LOGW`). At most 4 connections are open at once; a new client closes the least recently used one. Since v1.8.1 the server answers one request per connection (`Connection: close`) and then closes it, so idle connections kept open by browsers are not reset later; before v1.8.1 connections stayed open and each browser reset logged `error in recv : 104`.
 
 ### 3.9 Energy Saving
 This section gathers the requirements that reduce the power consumption, in view of a future battery supply.
@@ -193,7 +194,7 @@ This section gathers the requirements that reduce the power consumption, in view
 *   **Wi-Fi:** [v1.2.0] Add a symbol to indicate WiFi connectivity in the yellow area (see FR-5.7).
 *   **NTP:** SNTP client (UDP port 123), default server `pool.ntp.org`.
 *   **MQTT:** [v1.5.0] Client publishing the weather data as JSON to the configured broker (TCP 1883 for `mqtt://`, 8883 for `mqtts://`), topic `weather-station/data` (see FR-6.1 to FR-6.6).
-*   **HTTP:** [v1.7.0] Server on TCP port 80: `/`, `/api/current`, `/api/history?hours=N`, `/history.csv` (see FR-8.1 to FR-8.6).
+*   **HTTP:** [v1.7.0] Server on TCP port 80: `/`, `/api/current`, `/api/history?hours=N`, `/history.csv`, and `/favicon.ico` (empty answer, since v1.8.1) (see FR-8.1 to FR-8.6).
 
 ### 6.5 Web Interface
 *   [v1.7.0] Page at `http://<ip>/` with the current values and 24-hour charts, and a link to download the history as CSV (see FR-8.1 to FR-8.6).

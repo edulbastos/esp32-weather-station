@@ -89,6 +89,15 @@ esp_err_t handle_page(httpd_req_t *req)
     return httpd_resp_send(req, web_page_start, web_page_end - web_page_start);
 }
 
+// FR-8.2: browsers that ask for /favicon.ico anyway get an empty answer
+// instead of a 404 (which ESP-IDF logs as a warning).
+esp_err_t handle_favicon(httpd_req_t *req)
+{
+    httpd_resp_set_status(req, "204 No Content");
+    httpd_resp_set_hdr(req, "Cache-Control", "max-age=86400");
+    return httpd_resp_send(req, nullptr, 0);
+}
+
 // FR-8.3: current values as JSON.
 esp_err_t handle_current(httpd_req_t *req)
 {
@@ -184,6 +193,23 @@ esp_err_t handle_csv(httpd_req_t *req)
     return out.finish();
 }
 
+// FR-8.6: one request per connection. Browsers keep idle connections open and
+// later reset them, which ESP-IDF logs as "error in recv : 104"; closing each
+// connection after its answer avoids that. The page makes one request per
+// measurement or log interval, so the extra TCP handshakes are negligible.
+using Handler = esp_err_t (*)(httpd_req_t *);
+
+esp_err_t handle_and_close(httpd_req_t *req)
+{
+    httpd_resp_set_hdr(req, "Connection", "close");
+    const esp_err_t err = reinterpret_cast<Handler>(req->user_ctx)(req);
+    // On failure the server already closes the session itself.
+    if (err == ESP_OK) {
+        httpd_sess_trigger_close(req->handle, httpd_req_to_sockfd(req));
+    }
+    return err;
+}
+
 esp_err_t start_server()
 {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
@@ -197,14 +223,23 @@ esp_err_t start_server()
     if (err != ESP_OK) {
         return err;
     }
-    const httpd_uri_t handlers[] = {
-        {.uri = "/", .method = HTTP_GET, .handler = handle_page, .user_ctx = nullptr},
-        {.uri = "/api/current", .method = HTTP_GET, .handler = handle_current, .user_ctx = nullptr},
-        {.uri = "/api/history", .method = HTTP_GET, .handler = handle_history, .user_ctx = nullptr},
-        {.uri = "/history.csv", .method = HTTP_GET, .handler = handle_csv, .user_ctx = nullptr},
+    const struct {
+        const char *uri;
+        Handler handler;
+    } routes[] = {
+        {"/", handle_page},
+        {"/api/current", handle_current},
+        {"/api/history", handle_history},
+        {"/history.csv", handle_csv},
+        {"/favicon.ico", handle_favicon},
     };
-    for (const auto &h : handlers) {
-        if ((err = httpd_register_uri_handler(s_server, &h)) != ESP_OK) {
+    for (const auto &r : routes) {
+        httpd_uri_t uri = {};
+        uri.uri = r.uri;
+        uri.method = HTTP_GET;
+        uri.handler = handle_and_close;
+        uri.user_ctx = reinterpret_cast<void *>(r.handler);
+        if ((err = httpd_register_uri_handler(s_server, &uri)) != ESP_OK) {
             return err;
         }
     }
