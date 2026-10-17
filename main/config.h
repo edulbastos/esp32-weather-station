@@ -84,6 +84,7 @@ constexpr const char *MQTT_TOPIC          = "weather-station/data";
 constexpr int         MQTT_QOS            = 0;     // 0 = at most once
 constexpr bool        MQTT_RETAIN         = true;  // new subscribers get the last reading
 constexpr uint32_t    MQTT_RECONNECT_MS   = 10000;
+constexpr int         MQTT_KEEPALIVE_S    = 30;  // ESP-MQTT default 120
 // Client ID = prefix + last 3 bytes of the Wi-Fi MAC, e.g. weather-station-51a842
 constexpr const char *MQTT_CLIENT_ID_PREFIX = "weather-station-";
 

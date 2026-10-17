@@ -24,6 +24,33 @@ std::atomic<bool> s_connected{false};   // has an IP address
 std::atomic<bool> s_associated{false};  // associated with the access point
 TimerHandle_t s_retry_timer = nullptr;
 
+const char *auth_text(wifi_auth_mode_t mode)
+{
+    switch (mode) {
+    case WIFI_AUTH_OPEN:           return "open";
+    case WIFI_AUTH_WEP:            return "WEP";
+    case WIFI_AUTH_WPA_PSK:        return "WPA";
+    case WIFI_AUTH_WPA2_PSK:       return "WPA2";
+    case WIFI_AUTH_WPA_WPA2_PSK:   return "WPA/WPA2";
+    case WIFI_AUTH_WPA3_PSK:       return "WPA3";
+    case WIFI_AUTH_WPA2_WPA3_PSK:  return "WPA2/WPA3";
+    default:                       return "other";
+    }
+}
+
+// NFR-2.3: logs which access point was chosen, to diagnose a weak or
+// unstable link from the serial console.
+void log_connection(const wifi_event_sta_connected_t *info)
+{
+    wifi_ap_record_t ap = {};
+    const bool have_ap = esp_wifi_sta_get_ap_info(&ap) == ESP_OK;
+    ESP_LOGI(TAG, "Associated with \"%.*s\" (%02x:%02x:%02x:%02x:%02x:%02x), channel %u %s, %s, %d dBm",
+             info->ssid_len, reinterpret_cast<const char *>(info->ssid), info->bssid[0], info->bssid[1],
+             info->bssid[2], info->bssid[3], info->bssid[4], info->bssid[5], info->channel,
+             have_ap && ap.second != WIFI_SECOND_CHAN_NONE ? "HT40" : "HT20", auth_text(info->authmode),
+             have_ap ? ap.rssi : 0);
+}
+
 void retry_connect(TimerHandle_t)
 {
     esp_wifi_connect();
@@ -35,6 +62,7 @@ void on_event(void *, esp_event_base_t base, int32_t id, void *data)
         esp_wifi_connect();
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_CONNECTED) {
         s_associated = true;
+        log_connection(static_cast<wifi_event_sta_connected_t *>(data));
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         // FR-5.5: keep trying, but not in a tight loop.
         s_connected = false;
@@ -110,6 +138,10 @@ esp_err_t start()
     strlcpy(reinterpret_cast<char *>(wifi_cfg.sta.password), config::WIFI_PASSWORD,
             sizeof(wifi_cfg.sta.password));
     wifi_cfg.sta.threshold.authmode = config::WIFI_PASSWORD[0] ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
+    // NFR-2.3: a mesh offers the same network from several nodes; scan all
+    // channels and take the strongest instead of the first one found.
+    wifi_cfg.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+    wifi_cfg.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
 
     if ((err = esp_wifi_set_mode(WIFI_MODE_STA)) != ESP_OK ||
         (err = esp_wifi_set_config(WIFI_IF_STA, &wifi_cfg)) != ESP_OK ||

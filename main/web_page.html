@@ -86,6 +86,8 @@
 <script>
 const RANGES = { 1: "hour", 24: "24 hours", 168: "7 days" };
 const RESYNC_MS = 30 * 60 * 1000;  // full reload of the chart data
+const HISTORY_TIMEOUT_MS = 20000;  // give up waiting for the history...
+const HISTORY_RETRY_MS = 5000;     // ...and try again after this
 const $ = (id) => document.getElementById(id);
 
 let hours = 24;
@@ -156,8 +158,13 @@ async function loadCurrent() {
 async function loadHistory() {
   clearTimeout(historyTimer);
   const gen = ++historyGen;
+  // On a weak Wi-Fi link an answer can take very long; give up after
+  // HISTORY_TIMEOUT_MS and try again instead of waiting indefinitely.
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), HISTORY_TIMEOUT_MS);
+  let retryIn = RESYNC_MS;
   try {
-    const r = await fetch("/api/history?hours=" + hours, { cache: "no-store" });
+    const r = await fetch("/api/history?hours=" + hours, { cache: "no-store", signal: abort.signal });
     if (!r.ok) throw new Error(r.status);
     const d = await r.json();
     if (gen !== historyGen) return;  // a newer load (e.g. another period) started
@@ -175,9 +182,13 @@ async function loadHistory() {
     drawCharts();
   } catch (e) {
     if (gen !== historyGen) return;
-    $("history-info").textContent = "history could not be loaded";
+    $("history-info").textContent = e.name === "AbortError"
+      ? "station slow to answer, retrying…" : "history could not be loaded, retrying…";
+    retryIn = HISTORY_RETRY_MS;
+  } finally {
+    clearTimeout(timer);
   }
-  historyTimer = setTimeout(loadHistory, RESYNC_MS);
+  if (gen === historyGen) historyTimer = setTimeout(loadHistory, retryIn);
 }
 
 // Adds a measurement to the charts without asking the station again. It is
@@ -208,6 +219,16 @@ function addPoint(t, v) {
   const cutoff = t - hours * 3600;
   while (pts.length && pts[0].t < cutoff) pts.shift();
   drawCharts();
+}
+
+// Shown right away when the period changes, until the data arrive.
+function showLoading() {
+  for (const id of ["chart-temp", "chart-hum", "chart-pres"]) {
+    const svg = $(id), W = svg.clientWidth || 600;
+    svg.setAttribute("viewBox", `0 0 ${W} 170`);
+    svg.innerHTML = `<text x="${W / 2}" y="85" text-anchor="middle">Loading…</text>`;
+  }
+  $("history-info").textContent = "loading…";
 }
 
 function drawCharts() {
@@ -267,6 +288,7 @@ function selectRange(h) {
     b.setAttribute("aria-pressed", String(Number(b.dataset.hours) === h));
   });
   chart = null;
+  showLoading();
   loadHistory();
 }
 

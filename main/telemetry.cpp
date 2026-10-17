@@ -119,6 +119,9 @@ esp_err_t start()
         cfg.credentials.authentication.password = config::MQTT_PASSWORD;
     }
     cfg.network.disable_auto_reconnect = true;
+    // FR-6.5: a connection that stops delivering is noticed after about
+    // 1.5 keepalive periods (ping after half a period, then a full period).
+    cfg.session.keepalive = config::MQTT_KEEPALIVE_S;
 
     // Fixed, readable client ID, unique per board (from the MAC address).
     uint8_t mac[6] = {};

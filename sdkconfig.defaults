@@ -13,3 +13,8 @@ CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 # Partition table with the measurement history partition (FR-7.1)
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# Wi-Fi: no A-MPDU aggregation on reception. The station receives little data,
+# and some mesh access points kept tearing the Block Ack sessions down
+# (ADDBA/DELBA), which came with packet loss (NFR-2.3).
+# CONFIG_ESP_WIFI_AMPDU_RX_ENABLED is not set
