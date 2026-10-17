@@ -98,7 +98,11 @@ try {
 // server have n = 0 (already averaged); points added by the page count the
 // measurements averaged into them.
 let chart = null;
-let historyTimer = null;
+let historyTimer = null, currentTimer = null;
+// Each call increments its counter; an answer that arrives after a newer
+// call has started is dropped, so only one polling loop ever runs.
+let historyGen = 0, currentGen = 0;
+let measurePeriod = 60;  // s, from /api/current
 
 function fmtTime(unix) {
   return new Date(unix * 1000).toLocaleString([], { dateStyle: "short", timeStyle: "medium" });
@@ -116,11 +120,15 @@ function setStatus(text, error) {
 // FR-8.2: current values, refreshed at the measurement interval. Each new
 // measurement is also added to the charts (FR-8.4).
 async function loadCurrent() {
+  clearTimeout(currentTimer);
+  const gen = ++currentGen;
   let delay = 5000;
   try {
     const r = await fetch("/api/current", { cache: "no-store" });
     if (!r.ok) throw new Error(r.status);
     const d = await r.json();
+    if (gen !== currentGen) return;
+    measurePeriod = d.measure_period_s;
     delay = Math.max(1000, d.measure_period_s * 1000);
     const wifi = d.wifi_level > 0 ? " · Wi-Fi " + "▂▄▆".slice(0, d.wifi_level) : "";
     if (d.valid) {
@@ -136,22 +144,26 @@ async function loadCurrent() {
       setStatus("Sensor error" + wifi, true);
     }
   } catch (e) {
+    if (gen !== currentGen) return;
     setStatus("Station unreachable, retrying…", true);
   }
-  setTimeout(loadCurrent, delay);
+  currentTimer = setTimeout(loadCurrent, delay);
 }
 
 // FR-8.4: chart data, averaged by the station into about 150 points. Loaded
-// when the page opens, when the period changes and every RESYNC_MS.
+// when the page opens, when the period changes, when the page becomes
+// visible again, after missed measurements, and every RESYNC_MS.
 async function loadHistory() {
   clearTimeout(historyTimer);
-  const requested = hours;
+  const gen = ++historyGen;
   try {
-    const r = await fetch("/api/history?hours=" + requested, { cache: "no-store" });
+    const r = await fetch("/api/history?hours=" + hours, { cache: "no-store" });
     if (!r.ok) throw new Error(r.status);
     const d = await r.json();
-    if (requested !== hours) return;  // the period changed meanwhile
+    if (gen !== historyGen) return;  // a newer load (e.g. another period) started
     chart = {
+      loadedAt: Date.now(),
+      logPeriod: d.log_period_s,
       bucket: d.bucket_s,
       gap: 3 * Math.max(d.bucket_s, d.log_period_s),  // longer pauses break the line
       points: d.records.map((x) => ({ t: x[0], v: [x[1], x[2], x[3]], n: 0 })),
@@ -162,6 +174,7 @@ async function loadHistory() {
       : "one point per measurement";
     drawCharts();
   } catch (e) {
+    if (gen !== historyGen) return;
     $("history-info").textContent = "history could not be loaded";
   }
   historyTimer = setTimeout(loadHistory, RESYNC_MS);
@@ -175,6 +188,14 @@ function addPoint(t, v) {
   const pts = chart.points;
   // The page asks at every measurement interval; add each measurement once.
   if (t <= chart.lastAdded) return;
+  // Measurements were missed (tab in the background, computer asleep...):
+  // the station has them in its history, so load it instead of leaving a gap.
+  // At most once a minute, in case the history really has a gap.
+  const maxStep = 2 * Math.max(measurePeriod, chart.logPeriod) + 10;
+  if (chart.lastAdded > 0 && t - chart.lastAdded > maxStep && Date.now() - chart.loadedAt > 60000) {
+    loadHistory();
+    return;
+  }
   chart.lastAdded = t;
   const last = pts[pts.length - 1];
   if (last && last.n > 0 && t - last.start < chart.bucket) {
@@ -257,6 +278,15 @@ let resizeTimer;
 window.addEventListener("resize", () => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(drawCharts, 150);
+});
+
+// Timers are slowed down or frozen while the page is hidden; catch up at once
+// when it is shown again.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") {
+    loadCurrent();
+    loadHistory();
+  }
 });
 
 selectRange(hours);
