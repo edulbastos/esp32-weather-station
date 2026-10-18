@@ -1,6 +1,6 @@
 # Functional Specification: ESP32 Weather Station
 
-**Version:** 1.8.9
+**Version:** 1.8.10
 
 ## Document Control
 
@@ -27,6 +27,7 @@
 | 1.8.7   | 2026-10-17 | Weak or unstable Wi-Fi: strongest access point chosen, connection details logged, A-MPDU reception off, MQTT keepalive 30 s (FR-6.5 changed); web charts show "Loading…" and retry a history request after 20 s (FR-8.4 changed). |
 | 1.8.8   | 2026-10-17 | Correction: A-MPDU reception aggregation back to the ESP-IDF default (turned off in v1.8.7 after a misread log); routine Wi-Fi driver messages no longer logged (section 6.4 changed); MQTT with QoS 1 so readings in transit survive a reconnection (FR-6.4 changed), keepalive 60 s (FR-6.5 changed). |
 | 1.8.9   | 2026-10-18 | Web charts served from tables kept in RAM and fed by every measurement (constant answer time at any measurement or log interval); the page loads all three periods at once, so switching is instant (FR-8.4 changed); each Wi-Fi disconnection logged with network, access point, signal and the meaning of the reason (section 6.4). |
+| 1.8.10  | 2026-10-18 | Documentation only: photos of the station and of the web page in README.md; firmware unchanged. |
 
 ### Requirement Markers
 *   **`[PROPOSED]`**: The requirement is new and not implemented yet.

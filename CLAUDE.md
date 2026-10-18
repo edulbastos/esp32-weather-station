@@ -17,6 +17,7 @@ The project is built with ESP-IDF (v6.1) and uses FreeRTOS to run sensor measure
 *   `CMakeLists.txt`: ESP-IDF project file.
 *   `sdkconfig.defaults`: Default configuration (target `esp32`, console at 115200 baud, custom partition table).
 *   `partitions.csv`: Flash layout (8 MB): `nvs`, `phy_init`, app `factory` (2 MB) and the `history` data partition (5 MB).
+*   `images/`: Photos shown in `README.md` (the station, the web page).
 *   `main/config.h`: Central configuration (I2C pins and addresses, display size, sea-level pressure, task periods, stack sizes and priorities).
 *   `main/bme280.h`, `main/bme280.cpp`: BME280 driver with the Bosch datasheet compensation formulas.
 *   `main/ssd1306.h`, `main/ssd1306.cpp`: SSD1306 driver with a local frame buffer.
