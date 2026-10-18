@@ -83,7 +83,7 @@ The timestamp appears once the clock has been synchronized via NTP. The Wi-Fi cr
 
 ## Sending data via MQTT
 
-With a broker URI set in menuconfig (for example `mqtt://192.168.1.10:1883`), the station publishes the latest reading every 60 s (configurable) to the topic `weather-station/data`, as JSON with the retain flag:
+With a broker URI set in menuconfig (for example `mqtt://192.168.1.10:1883`), the station publishes the latest reading every 60 s (configurable) to the topic `weather-station/data`, as JSON with QoS 1 (the broker confirms each message; unconfirmed ones are sent again after a reconnection) and the retain flag:
 
 ```json
 {"time":1792161125,"temperature_c":23.41,"humidity_rh":56.12,"pressure_hpa":1012.84}

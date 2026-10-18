@@ -5,6 +5,7 @@
 #include <cstdint>
 #include "driver/gpio.h"
 #include "driver/i2c_types.h"
+#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "sdkconfig.h"
 
@@ -71,6 +72,10 @@ constexpr int8_t      WIFI_RSSI_FAIR_DBM  = -70;
 // the station then stops receiving while it can still send; off by default
 // on mains power. Turn on to save energy (e.g. on battery).
 constexpr bool        WIFI_POWER_SAVE     = false;
+// Log level of the Wi-Fi driver (tag "wifi"). Its INFO lines (Block Ack
+// sessions "ba-add"/"ba-del"/"DELBA", power save, state changes) are routine;
+// the association is logged by net_time instead.
+constexpr esp_log_level_t WIFI_DRIVER_LOG_LEVEL = ESP_LOG_WARN;
 
 // ---------------------------------------------------------------------------
 // Data transmission via MQTT (FR-6.x)
@@ -81,10 +86,11 @@ constexpr const char *MQTT_BROKER_URI     = CONFIG_WS_MQTT_BROKER_URI;
 constexpr const char *MQTT_USERNAME       = CONFIG_WS_MQTT_USERNAME;
 constexpr const char *MQTT_PASSWORD       = CONFIG_WS_MQTT_PASSWORD;
 constexpr const char *MQTT_TOPIC          = "weather-station/data";
-constexpr int         MQTT_QOS            = 0;     // 0 = at most once
+constexpr int         MQTT_QOS            = 1;     // 1 = acknowledged by the broker, resent if not
 constexpr bool        MQTT_RETAIN         = true;  // new subscribers get the last reading
 constexpr uint32_t    MQTT_RECONNECT_MS   = 10000;
-constexpr int         MQTT_KEEPALIVE_S    = 30;  // ESP-MQTT default 120
+constexpr int         MQTT_KEEPALIVE_S    = 60;  // ESP-MQTT default 120
+constexpr uint32_t    MQTT_OUTBOX_LIMIT   = 4096;  // bytes of unacknowledged messages kept
 // Client ID = prefix + last 3 bytes of the Wi-Fi MAC, e.g. weather-station-51a842
 constexpr const char *MQTT_CLIENT_ID_PREFIX = "weather-station-";
 

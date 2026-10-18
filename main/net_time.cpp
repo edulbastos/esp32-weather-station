@@ -110,6 +110,8 @@ esp_err_t start()
         return ESP_ERR_INVALID_STATE;
     }
 
+    esp_log_level_set("wifi", config::WIFI_DRIVER_LOG_LEVEL);
+
     esp_err_t err = init_nvs();
     if (err != ESP_OK) {
         return err;

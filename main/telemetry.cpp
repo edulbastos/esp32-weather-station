@@ -120,8 +120,12 @@ esp_err_t start()
     }
     cfg.network.disable_auto_reconnect = true;
     // FR-6.5: a connection that stops delivering is noticed after about
-    // 1.5 keepalive periods (ping after half a period, then a full period).
+    // 1.5 keepalive periods (ping after half a period, then a full period);
+    // shorter stalls are ridden out.
     cfg.session.keepalive = config::MQTT_KEEPALIVE_S;
+    // FR-6.4: QoS 1 messages stay in the outbox until the broker confirms
+    // them and are resent after a reconnection; bound the memory they use.
+    cfg.outbox.limit = config::MQTT_OUTBOX_LIMIT;
 
     // Fixed, readable client ID, unique per board (from the MAC address).
     uint8_t mac[6] = {};
