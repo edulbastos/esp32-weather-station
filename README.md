@@ -5,9 +5,9 @@ An ESP32 weather station that reads **temperature**, **humidity** and **air pres
 Written in C++ with **ESP-IDF v6.1** and **FreeRTOS**. The BME280 and SSD1306 drivers are implemented directly on top of the ESP-IDF I2C driver; the only external component is Espressif's MQTT client (`espressif/mqtt`), which the build downloads automatically from the ESP Component Registry.
 
 <p align="center">
-  <img src="images/image0-small.jpeg" alt="The weather station: ideaspark ESP32 board with the BME280 wired to it, the OLED showing date, time, Wi-Fi signal, temperature, humidity and pressure" width="280">
+  <img src="images/station.jpeg" alt="The weather station: ideaspark ESP32 board with the BME280 wired to it, the OLED showing date, time, Wi-Fi signal, temperature, humidity and pressure" width="280" height="537">
   &nbsp;&nbsp;
-  <img src="images/image1.jpeg" alt="The web page of the station on an iPhone: current values and the 24-hour temperature chart" width="280">
+  <img src="images/image1.jpeg" alt="The web page of the station on an iPhone: current values and the 24-hour temperature chart" width="280" height="537">
 </p>
 <p align="center"><em>The station with the BME280 wired to the board (left) and its web page on a phone, 24-hour view (right).</em></p>
 
