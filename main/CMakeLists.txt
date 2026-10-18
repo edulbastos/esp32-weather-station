@@ -1,4 +1,4 @@
-idf_component_register(SRCS "main.cpp" "bme280.cpp" "ssd1306.cpp" "net_time.cpp" "telemetry.cpp" "history.cpp" "web_server.cpp" "health.cpp"
+idf_component_register(SRCS "main.cpp" "bme280.cpp" "ssd1306.cpp" "net_time.cpp" "telemetry.cpp" "history.cpp" "web_server.cpp" "health.cpp" "charts.cpp"
                        INCLUDE_DIRS "."
                        EMBED_FILES "web_page.html"
                        REQUIRES esp_driver_i2c esp_driver_gpio log freertos

@@ -38,6 +38,29 @@ const char *auth_text(wifi_auth_mode_t mode)
     }
 }
 
+// Names of the disconnection reasons seen with this station's routers.
+const char *reason_text(uint8_t reason)
+{
+    switch (reason) {
+    case WIFI_REASON_AUTH_EXPIRE:                   return "access point did not answer authentication";
+    case WIFI_REASON_AUTH_LEAVE:                    return "deauthenticated by the access point";
+    case WIFI_REASON_DISASSOC_DUE_TO_INACTIVITY:    return "inactivity";
+    case WIFI_REASON_ASSOC_TOOMANY:                 return "access point full";
+    case WIFI_REASON_CLASS2_FRAME_FROM_NONAUTH_STA: return "access point lost the authentication";
+    case WIFI_REASON_CLASS3_FRAME_FROM_NONASSOC_STA:return "access point lost the association";
+    case WIFI_REASON_ASSOC_LEAVE:                   return "disassociated";
+    case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:        return "WPA handshake timed out (password?)";
+    case WIFI_REASON_MISSING_ACKS:                  return "too many frames lost";
+    case WIFI_REASON_BEACON_TIMEOUT:                return "access point not heard";
+    case WIFI_REASON_NO_AP_FOUND:                   return "network not found";
+    case WIFI_REASON_AUTH_FAIL:                     return "authentication failed";
+    case WIFI_REASON_ASSOC_FAIL:                    return "association failed";
+    case WIFI_REASON_HANDSHAKE_TIMEOUT:             return "handshake timed out";
+    case WIFI_REASON_CONNECTION_FAIL:               return "connection failed";
+    default:                                        return "see ESP-IDF wifi_err_reason_t";
+    }
+}
+
 // NFR-2.3: logs which access point was chosen, to diagnose a weak or
 // unstable link from the serial console.
 void log_connection(const wifi_event_sta_connected_t *info)
@@ -67,9 +90,14 @@ void on_event(void *, esp_event_base_t base, int32_t id, void *data)
         // FR-5.5: keep trying, but not in a tight loop.
         s_connected = false;
         s_associated = false;
+        // NFR-2.3: which access point and why, since the Wi-Fi driver's own
+        // messages are not logged (WIFI_DRIVER_LOG_LEVEL).
         const auto *info = static_cast<wifi_event_sta_disconnected_t *>(data);
-        ESP_LOGW(TAG, "Wi-Fi disconnected (reason %d), retrying in %lu ms", info->reason,
-                 static_cast<unsigned long>(config::WIFI_RETRY_DELAY_MS));
+        ESP_LOGW(TAG, "Wi-Fi disconnected from \"%.*s\" (%02x:%02x:%02x:%02x:%02x:%02x, %d dBm): reason %d, %s; "
+                 "retrying in %lu ms",
+                 info->ssid_len, reinterpret_cast<const char *>(info->ssid), info->bssid[0], info->bssid[1],
+                 info->bssid[2], info->bssid[3], info->bssid[4], info->bssid[5], info->rssi, info->reason,
+                 reason_text(info->reason), static_cast<unsigned long>(config::WIFI_RETRY_DELAY_MS));
         xTimerStart(s_retry_timer, 0);
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         const auto *info = static_cast<ip_event_got_ip_t *>(data);

@@ -7,11 +7,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include "config.h"
 #include "esp_event.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "charts.h"
 #include "history.h"
 #include "net_time.h"
 
@@ -52,14 +54,23 @@ public:
         return ok_;
     }
 
+    // Formats one piece of the answer. A piece that does not fit would make
+    // the JSON invalid, so it fails the answer (and is logged) instead of
+    // being cut off.
     [[gnu::format(printf, 2, 3)]] bool print(const char *fmt, ...)
     {
-        char line[96];
+        char line[192];
         va_list args;
         va_start(args, fmt);
         const int n = vsnprintf(line, sizeof(line), fmt, args);
         va_end(args);
-        return n > 0 && write(line, std::min<size_t>(n, sizeof(line) - 1));
+        if (n < 0 || static_cast<size_t>(n) >= sizeof(line)) {
+            ESP_LOGE(TAG, "Answer piece of %d bytes does not fit the %u-byte buffer", n,
+                     static_cast<unsigned>(sizeof(line)));
+            ok_ = false;
+            return false;
+        }
+        return write(line, n);
     }
 
     // Sends what is left and ends the chunked response.
@@ -168,6 +179,35 @@ esp_err_t handle_history(httpd_req_t *req)
             points = std::clamp<uint32_t>(strtoul(value, nullptr, 10), 10, config::WEB_HISTORY_MAX_POINTS);
         }
     }
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    struct tm now_tm;
+    const bool synced = net_time::local_time(now_tm);
+
+    // The periods of the page come ready from RAM (charts.cpp): no flash
+    // access, constant time whatever the measurement or log interval.
+    if (charts::serves(hours, points)) {
+        std::unique_ptr<charts::Point[]> pts(new (std::nothrow) charts::Point[config::WEB_CHART_POINTS]);
+        if (!pts) {
+            return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+        }
+        uint32_t bucket_s = 0;
+        const size_t n = charts::snapshot(hours, synced ? time(nullptr) : 0, pts.get(), bucket_s);
+        ChunkWriter out(req);
+        out.print("{\"hours\":%lu,\"points\":%lu,\"bucket_s\":%lu,\"log_period_s\":%lu,\"measure_period_s\":%lu,"
+                  "\"source\":\"measurements\",\"records\":[",
+                  static_cast<unsigned long>(hours), static_cast<unsigned long>(points),
+                  static_cast<unsigned long>(bucket_s), static_cast<unsigned long>(config::LOG_PERIOD_MS / 1000),
+                  static_cast<unsigned long>(config::MEASURE_PERIOD_MS / 1000));
+        for (size_t i = 0; i < n; i++) {
+            out.print("%s[%lld,%.2f,%.2f,%.1f]", i ? "," : "", static_cast<long long>(pts[i].time),
+                      pts[i].temperature_c, pts[i].humidity_rh, pts[i].pressure_hpa);
+        }
+        out.print("],\"available\":true}");
+        return out.finish();
+    }
+
+    // Other periods: averaged from the flash history on request.
     const uint32_t window_s = hours * 3600;
     const uint32_t bucket_s = std::max<uint32_t>(1, window_s / points);
 
@@ -178,15 +218,14 @@ esp_err_t handle_history(httpd_req_t *req)
     // Buckets start at the beginning of the window; before NTP sync the
     // window is unknown and starts at the first record that has a time.
     // Records without a time cannot be placed on the chart.
-    struct tm now_tm;
-    time_t base = net_time::local_time(now_tm) ? time(nullptr) - static_cast<time_t>(window_s) : 0;
+    time_t base = synced ? time(nullptr) - static_cast<time_t>(window_s) : 0;
 
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     ChunkWriter out(req);
-    out.print("{\"hours\":%lu,\"points\":%lu,\"bucket_s\":%lu,\"log_period_s\":%lu,\"records\":[",
+    out.print("{\"hours\":%lu,\"points\":%lu,\"bucket_s\":%lu,\"log_period_s\":%lu,\"measure_period_s\":%lu,"
+              "\"source\":\"history\",\"records\":[",
               static_cast<unsigned long>(hours), static_cast<unsigned long>(points),
-              static_cast<unsigned long>(bucket_s), static_cast<unsigned long>(config::LOG_PERIOD_MS / 1000));
+              static_cast<unsigned long>(bucket_s), static_cast<unsigned long>(config::LOG_PERIOD_MS / 1000),
+              static_cast<unsigned long>(config::MEASURE_PERIOD_MS / 1000));
 
     struct {
         int64_t index = -1;

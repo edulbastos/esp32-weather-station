@@ -25,6 +25,7 @@ The project is built with ESP-IDF (v6.1) and uses FreeRTOS to run sensor measure
 *   `main/telemetry.h`, `main/telemetry.cpp`: MQTT client and the JSON payload. Auto-reconnect of the client is off: the module reconnects at once when Wi-Fi gets an IP, retries every `MQTT_RECONNECT_MS` while it has one, and does not try while Wi-Fi is down.
 *   `main/history.h`, `main/history.cpp`: Measurement history as a ring buffer of 16-byte records with CRC16 on the `history` partition, and the `log` console command (`info`, `dump [N]`, `clear`).
 *   `main/web_server.h`, `main/web_server.cpp`: HTTP server (`esp_http_server`) started on the first IP address: `/`, `/api/current`, `/api/history?hours=N&points=P` (averaged into time buckets), `/history.csv`. Large answers are sent in chunks.
+*   `main/charts.h`, `main/charts.cpp`: Chart tables for the web page: per period in `WEB_CHART_PERIODS_H` (1 h, 24 h, 7 d) a ring of `WEB_CHART_POINTS` time buckets with running averages, fed by `taskMeasure` on every measurement and rebuilt from the history at start-up; `/api/history` serves these periods from RAM.
 *   `main/health.h`, `main/health.cpp`: `taskHealth` (network check every `NET_CHECK_PERIOD_MS`: MQTT connected, web traffic, or gateway ping as last resort; forced Wi-Fi reconnect and then restart when Wi-Fi is associated but dead, health log every `HEALTH_LOG_PERIOD_MS`), the `sys` console command, and the start reason at boot.
 *   `main/web_page.html`: The web page (HTML, CSS and JavaScript in one file, no external resources), embedded in the firmware with `EMBED_FILES` and, gzip-compressed at build time by `main/gzip_file.py`, with `target_add_binary_data`; browsers that accept gzip get the compressed copy.
 *   `main/idf_component.yml`: external component `espressif/mqtt` from the ESP Component Registry (downloaded into `managed_components/`, not committed).
@@ -71,7 +72,7 @@ The code is divided into five tasks:
 *   **`taskLog`:** Stores the latest valid measurement in the flash history at the log interval (`CONFIG_WS_LOG_PERIOD_S`, default 60 seconds).
 *   **`taskHealth`:** Network watchdog and health log (NFR-2.3, NFR-2.4), see `main/health.cpp`.
 
-The HTTP server runs in its own ESP-IDF task and reads the current data through `current_for_web()` in `main.cpp` (under `dataMutex`) and the history through `history::visit()`.
+The HTTP server runs in its own ESP-IDF task and reads the current data through `current_for_web()` in `main.cpp` (under `dataMutex`) the chart periods through `charts::snapshot()`, and the history (CSV, other periods) through `history::visit()`.
 
 The ESP-IDF console REPL runs on the serial port (prompt `weather> `) with the `help` and `log` commands; `log dump` silences other log output while it prints.
 

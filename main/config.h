@@ -113,6 +113,9 @@ constexpr uint16_t    WEB_SEND_TIMEOUT_S     = 15;    // give up sending after t
 constexpr uint32_t    WEB_HISTORY_HOURS      = 24;    // default window of /api/history
 constexpr uint32_t    WEB_HISTORY_MAX_HOURS  = 8760;  // limit of /api/history?hours= (1 year)
 constexpr uint32_t    WEB_CHART_POINTS       = 150;   // points per chart, averaged
+// Chart periods kept ready in RAM (charts.cpp), with WEB_CHART_POINTS
+// buckets each: 1 h -> 24 s, 24 h -> 9.6 min, 7 d -> 67.2 min per point
+constexpr uint32_t    WEB_CHART_PERIODS_H[]  = {1, 24, 168};
 constexpr uint32_t    WEB_HISTORY_MAX_POINTS = 1440;  // limit of /api/history?points=
 
 // ---------------------------------------------------------------------------

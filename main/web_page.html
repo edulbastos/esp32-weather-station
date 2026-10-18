@@ -96,14 +96,18 @@ try {
   if (RANGES[saved]) hours = saved;
 } catch (e) { /* storage unavailable: keep the default */ }
 
-// Chart data: points are { t, v: [temp, hum, pres], n }. Points from the
-// server have n = 0 (already averaged); points added by the page count the
-// measurements averaged into them.
-let chart = null;
-let historyTimer = null, currentTimer = null;
+// Chart data per period (hours -> chart). Points are { t, v: [temp, hum,
+// pres], n }: points from the station have n = 0 (already averaged), points
+// added by the page count the measurements averaged into them. All periods are
+// loaded when the page opens, so switching between them needs no request.
+const PERIODS = [1, 24, 168];
+const data = {};
+const historyGen = {}, retryTimers = {};
+let resyncTimer = null, loadAllGen = 0;
+let currentTimer = null;
 // Each call increments its counter; an answer that arrives after a newer
 // call has started is dropped, so only one polling loop ever runs.
-let historyGen = 0, currentGen = 0;
+let currentGen = 0;
 let measurePeriod = 60;  // s, from /api/current
 
 function fmtTime(unix) {
@@ -152,76 +156,92 @@ async function loadCurrent() {
   currentTimer = setTimeout(loadCurrent, delay);
 }
 
-// FR-8.4: chart data, averaged by the station into about 150 points. Loaded
-// when the page opens, when the period changes, when the page becomes
-// visible again, after missed measurements, and every RESYNC_MS.
-async function loadHistory() {
-  clearTimeout(historyTimer);
-  const gen = ++historyGen;
-  // On a weak Wi-Fi link an answer can take very long; give up after
-  // HISTORY_TIMEOUT_MS and try again instead of waiting indefinitely.
+// FR-8.4: chart data of one period, about 150 points averaged by the
+// station. On a weak Wi-Fi link an answer can take very long; give up after
+// HISTORY_TIMEOUT_MS and try that period again after HISTORY_RETRY_MS.
+async function loadHistory(h) {
+  clearTimeout(retryTimers[h]);
+  const gen = historyGen[h] = (historyGen[h] || 0) + 1;
   const abort = new AbortController();
   const timer = setTimeout(() => abort.abort(), HISTORY_TIMEOUT_MS);
-  let retryIn = RESYNC_MS;
   try {
-    const r = await fetch("/api/history?hours=" + hours, { cache: "no-store", signal: abort.signal });
+    const r = await fetch("/api/history?hours=" + h, { cache: "no-store", signal: abort.signal });
     if (!r.ok) throw new Error(r.status);
     const d = await r.json();
-    if (gen !== historyGen) return;  // a newer load (e.g. another period) started
-    chart = {
+    if (gen !== historyGen[h]) return;  // a newer load of this period started
+    const step = d.source === "measurements" ? d.measure_period_s : d.log_period_s;
+    data[h] = {
       loadedAt: Date.now(),
       logPeriod: d.log_period_s,
       bucket: d.bucket_s,
-      gap: 3 * Math.max(d.bucket_s, d.log_period_s),  // longer pauses break the line
+      gap: 3 * Math.max(d.bucket_s, step),  // longer pauses break the line
       points: d.records.map((x) => ({ t: x[0], v: [x[1], x[2], x[3]], n: 0 })),
+      lastAdded: d.records.length ? d.records[d.records.length - 1][0] : 0,
+      info: !d.available ? "history not available"
+        : d.bucket_s > step ? "each point is the average of " + fmtDuration(d.bucket_s)
+        : "one point per measurement",
     };
-    chart.lastAdded = d.records.length ? d.records[d.records.length - 1][0] : 0;
-    $("history-info").textContent = !d.available ? "history not available"
-      : d.bucket_s > d.log_period_s ? "each point is the average of " + fmtDuration(d.bucket_s)
-      : "one point per measurement";
-    drawCharts();
+    if (h === hours) drawCharts();
   } catch (e) {
-    if (gen !== historyGen) return;
-    $("history-info").textContent = e.name === "AbortError"
-      ? "station slow to answer, retrying…" : "history could not be loaded, retrying…";
-    retryIn = HISTORY_RETRY_MS;
+    if (gen !== historyGen[h]) return;
+    if (h === hours && !data[h]) {
+      $("history-info").textContent = e.name === "AbortError"
+        ? "station slow to answer, retrying…" : "history could not be loaded, retrying…";
+    }
+    retryTimers[h] = setTimeout(() => loadHistory(h), HISTORY_RETRY_MS);
   } finally {
     clearTimeout(timer);
   }
-  if (gen === historyGen) historyTimer = setTimeout(loadHistory, retryIn);
 }
 
-// Adds a measurement to the charts without asking the station again. It is
-// averaged into the last point while that point is younger than one bucket,
-// so the number of points stays the same over time.
+// Loads every period, the selected one first; the station answers one
+// request at a time. Runs when the page opens, when it becomes visible
+// again, after missed measurements, and every RESYNC_MS.
+async function loadAll() {
+  clearTimeout(resyncTimer);
+  const gen = ++loadAllGen;
+  for (const h of [hours, ...PERIODS.filter((p) => p !== hours)]) {
+    if (gen !== loadAllGen) return;  // a newer loadAll took over
+    await loadHistory(h);
+  }
+  if (gen === loadAllGen) resyncTimer = setTimeout(loadAll, RESYNC_MS);
+}
+
+// Adds a measurement to every period without asking the station again. It
+// is averaged into the last point while that point is younger than one
+// bucket of its period, so the number of points stays the same over time.
 function addPoint(t, v) {
-  if (!chart) return;
-  const pts = chart.points;
-  // The page asks at every measurement interval; add each measurement once.
-  if (t <= chart.lastAdded) return;
   // Measurements were missed (tab in the background, computer asleep...):
-  // the station has them in its history, so load it instead of leaving a gap.
-  // At most once a minute, in case the history really has a gap.
-  const maxStep = 2 * Math.max(measurePeriod, chart.logPeriod) + 10;
-  if (chart.lastAdded > 0 && t - chart.lastAdded > maxStep && Date.now() - chart.loadedAt > 60000) {
-    loadHistory();
-    return;
+  // the station has them, so reload instead of leaving a gap. At most once a
+  // minute, in case the data really have a gap.
+  const sel = data[hours];
+  if (sel && sel.lastAdded > 0 && t > sel.lastAdded) {
+    const maxStep = 2 * Math.max(measurePeriod, sel.logPeriod) + 10;
+    if (t - sel.lastAdded > maxStep && Date.now() - sel.loadedAt > 60000) {
+      loadAll();
+      return;
+    }
   }
-  chart.lastAdded = t;
-  const last = pts[pts.length - 1];
-  if (last && last.n > 0 && t - last.start < chart.bucket) {
-    last.v = last.v.map((x, i) => (x * last.n + v[i]) / (last.n + 1));
-    last.t = (last.t * last.n + t) / (last.n + 1);
-    last.n++;
-  } else {
-    pts.push({ t, v, n: 1, start: t });
+  for (const h of PERIODS) {
+    const c = data[h];
+    // The page asks at every measurement interval; add each measurement once.
+    if (!c || t <= c.lastAdded) continue;
+    c.lastAdded = t;
+    const pts = c.points, last = pts[pts.length - 1];
+    if (last && last.n > 0 && t - last.start < c.bucket) {
+      last.v = last.v.map((x, i) => (x * last.n + v[i]) / (last.n + 1));
+      last.t = (last.t * last.n + t) / (last.n + 1);
+      last.n++;
+    } else {
+      pts.push({ t, v, n: 1, start: t });
+    }
+    const cutoff = t - h * 3600;
+    while (pts.length && pts[0].t < cutoff) pts.shift();
   }
-  const cutoff = t - hours * 3600;
-  while (pts.length && pts[0].t < cutoff) pts.shift();
   drawCharts();
 }
 
-// Shown right away when the period changes, until the data arrive.
+// Shown until the data of the selected period arrive.
 function showLoading() {
   for (const id of ["chart-temp", "chart-hum", "chart-pres"]) {
     const svg = $(id), W = svg.clientWidth || 600;
@@ -232,7 +252,9 @@ function showLoading() {
 }
 
 function drawCharts() {
+  const chart = data[hours];
   if (!chart) return;
+  $("history-info").textContent = chart.info;
   const series = (i) => chart.points.map((p) => [p.t, p.v[i]]);
   drawChart($("chart-temp"), series(0), "var(--temp)", 1, chart.gap);
   drawChart($("chart-hum"), series(1), "var(--hum)", 0, chart.gap);
@@ -280,6 +302,8 @@ function drawChart(svg, pts, color, digits, gap) {
   svg.innerHTML = out;
 }
 
+// Shows a period: from memory when its data are loaded (instant), else
+// "Loading…" until they arrive.
 function selectRange(h) {
   hours = h;
   try { localStorage.setItem("chart-hours", String(h)); } catch (e) { /* not essential */ }
@@ -287,9 +311,11 @@ function selectRange(h) {
   document.querySelectorAll(".ranges button").forEach((b) => {
     b.setAttribute("aria-pressed", String(Number(b.dataset.hours) === h));
   });
-  chart = null;
-  showLoading();
-  loadHistory();
+  if (data[h]) {
+    drawCharts();
+  } else {
+    showLoading();
+  }
 }
 
 document.querySelectorAll(".ranges button").forEach((b) => {
@@ -307,11 +333,12 @@ window.addEventListener("resize", () => {
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") {
     loadCurrent();
-    loadHistory();
+    loadAll();
   }
 });
 
 selectRange(hours);
+loadAll();
 loadCurrent();
 </script>
 </body>

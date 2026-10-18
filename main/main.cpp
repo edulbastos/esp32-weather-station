@@ -21,6 +21,7 @@
 #include <cstring>
 #include <ctime>
 #include "bme280.h"
+#include "charts.h"
 #include "config.h"
 #include "driver/gpio.h"
 #include "driver/i2c_master.h"
@@ -300,6 +301,11 @@ void taskMeasure(void *)
                 s_data.valid = false;  // stop showing stale values
             }
             xSemaphoreGive(s_data_mutex);
+        }
+
+        // FR-8.4: the chart tables are fed by every measurement.
+        if (err == ESP_OK && sample_time != 0) {
+            charts::add(sample_time, sample);
         }
 
         // FR-2.6: redraw right away so the measurement icon appears on time.
@@ -647,7 +653,7 @@ extern "C" void app_main(void)
 
     s_i2c_mutex = xSemaphoreCreateMutex();
     s_data_mutex = xSemaphoreCreateMutex();
-    if (s_i2c_mutex == nullptr || s_data_mutex == nullptr) {
+    if (s_i2c_mutex == nullptr || s_data_mutex == nullptr || charts::init() != ESP_OK) {
         enter_error_mode("Out of memory", true);
     }
 
@@ -698,6 +704,9 @@ extern "C" void app_main(void)
 
     // FR-7.6: the history is not critical either; without it the station runs on.
     const bool history_ok = (err = history::init()) == ESP_OK;
+    if (history_ok) {
+        charts::rebuild_from_history();  // FR-8.4: charts complete right after start-up
+    }
     if (!history_ok) {
         ESP_LOGW(TAG, "Measurement history unavailable: %s", esp_err_to_name(err));
     } else if (xTaskCreate(taskLog, "taskLog", config::LOG_TASK_STACK, nullptr,
