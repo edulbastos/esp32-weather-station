@@ -13,6 +13,7 @@
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "lwip/sockets.h"
 #include "charts.h"
 #include "history.h"
 #include "net_time.h"
@@ -313,6 +314,19 @@ esp_err_t handle_and_close(httpd_req_t *req)
     return err;
 }
 
+// The server writes each response header and each chunk in several small
+// pieces. With Nagle's algorithm on, every piece after the first waits for
+// the browser's ACK, which browsers delay by up to 200 ms: about 0.2 to 0.3 s
+// per request, over a second for a new page. Small answers do not need it.
+esp_err_t open_no_delay(httpd_handle_t, int sockfd)
+{
+    const int on = 1;
+    if (setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, &on, sizeof(on)) != 0) {
+        ESP_LOGW(TAG, "TCP_NODELAY not set: errno %d", errno);  // slower, still works
+    }
+    return ESP_OK;
+}
+
 esp_err_t start_server()
 {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
@@ -325,6 +339,7 @@ esp_err_t start_server()
     // retransmission; the default 5 s cut pages off halfway.
     cfg.send_wait_timeout = config::WEB_SEND_TIMEOUT_S;
     cfg.lru_purge_enable = true;  // a new client closes the least recently used connection
+    cfg.open_fn = open_no_delay;
 
     esp_err_t err = httpd_start(&s_server, &cfg);
     if (err != ESP_OK) {
