@@ -95,6 +95,9 @@ constexpr const char *MQTT_USERNAME       = CONFIG_WS_MQTT_USERNAME;
 constexpr const char *MQTT_PASSWORD       = CONFIG_WS_MQTT_PASSWORD;
 // FR-10.4: topics <prefix>/<device_id>/data and <prefix>/<device_id>/info
 constexpr const char *MQTT_TOPIC_PREFIX   = "weather-station";
+// FR-6.7: retained payloads of <prefix>/<device_id>/status
+constexpr const char *MQTT_STATUS_ONLINE  = "online";
+constexpr const char *MQTT_STATUS_OFFLINE = "offline";  // last will, sent by the broker
 // Topic used before v2.0.0; its retained message is cleared on every connection
 constexpr const char *MQTT_LEGACY_TOPIC   = "weather-station/data";
 constexpr int         MQTT_QOS            = 1;     // 1 = acknowledged by the broker, resent if not

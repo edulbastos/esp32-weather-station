@@ -15,6 +15,7 @@
 #include "esp_netif.h"
 #include "lwip/sockets.h"
 #include "charts.h"
+#include "gzip_stream.h"
 #include "history.h"
 #include "identity.h"
 #include "net_time.h"
@@ -305,28 +306,44 @@ esp_err_t handle_history(httpd_req_t *req)
     return out.finish();
 }
 
-// FR-8.5, FR-10.5: the whole history as a CSV download named after the device.
+// FR-8.5, FR-10.5: the whole history as a CSV download named after the
+// device; FR-8.8: gzip-compressed for browsers that accept it.
 esp_err_t handle_csv(httpd_req_t *req)
 {
+    ChunkWriter out(req, config::WEB_CSV_CHUNK_BYTES);
+    // Without memory for the compressor the CSV goes out uncompressed.
+    GzipStream gz;
+    const bool gzip = accepts_gzip(req) &&
+                      gz.begin([&out](const uint8_t *data, size_t len) {
+                          return out.write(reinterpret_cast<const char *>(data), len);
+                      });
+    auto write = [&](const char *data, size_t len) { return gzip ? gz.write(data, len) : out.write(data, len); };
+
     char disposition[64];
     snprintf(disposition, sizeof(disposition), "attachment; filename=\"history-%s.csv\"", identity::device_id());
     httpd_resp_set_type(req, "text/csv");
     httpd_resp_set_hdr(req, "Content-Disposition", disposition);
+    httpd_resp_set_hdr(req, "Vary", "Accept-Encoding");
+    if (gzip) {
+        httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+    }
     // FR-8.6: ESP-IDF sends every chunk in three pieces (size line, data,
     // CRLF). With TCP_NODELAY each piece is a segment of its own, so a long
     // download sent three packets per chunk, two of them tiny. Nagle's
     // algorithm merges them again; while data keep flowing it adds no delay.
     const int off = 0;
     setsockopt(httpd_req_to_sockfd(req), IPPROTO_TCP, TCP_NODELAY, &off, sizeof(off));
-    ChunkWriter out(req, config::WEB_CSV_CHUNK_BYTES);
-    out.write(history::CSV_HEADER, strlen(history::CSV_HEADER));
-    const esp_err_t err = history::visit(0, [&out](const history::Entry &e) {
+    write(history::CSV_HEADER, strlen(history::CSV_HEADER));
+    const esp_err_t err = history::visit(0, [&write](const history::Entry &e) {
         char line[128];
         const int n = history::format_csv(e, line, sizeof(line));
-        return n > 0 && out.write(line, std::min<size_t>(n, sizeof(line) - 1));
+        return n > 0 && write(line, std::min<size_t>(n, sizeof(line) - 1));
     });
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "History read failed: %s", esp_err_to_name(err));
+    }
+    if (gzip) {
+        gz.finish();
     }
     return out.finish();
 }

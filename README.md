@@ -107,7 +107,7 @@ With a broker URI set in menuconfig (for example `mqtt://192.168.1.10:1883`), th
 {"device_id":"ws-a0b76551a842","sensor_id":"bme280-3fa91c07","time":1792161125,"temperature_c":23.41,"humidity_rh":56.12,"pressure_hpa":1012.84}
 ```
 
-`time` is the Unix time of the reading and appears once the clock has been synchronized. On every connection, and after a sensor replacement, the station also publishes a retained message to `weather-station/<device_id>/info` with its name, firmware version, intervals and sensors (with channels, units and resolution); a management system finds all stations by subscribing to `weather-station/+/info`. To watch everything: `mosquitto_sub -h 192.168.1.10 -t 'weather-station/#' -v`. With an empty URI, or without Wi-Fi, nothing is sent; broker failures never stop the station.
+`time` is the Unix time of the reading and appears once the clock has been synchronized. On every connection, and after a sensor replacement, the station also publishes a retained message to `weather-station/<device_id>/info` with its name, firmware version, intervals and sensors (with channels, units and resolution); a management system finds all stations by subscribing to `weather-station/+/info`. The topic `weather-station/<device_id>/status` says whether the station is reachable: `online` while it is connected, and `offline`, which the broker publishes by itself about 90 s after the station stops answering (MQTT last will). To watch everything: `mosquitto_sub -h 192.168.1.10 -t 'weather-station/#' -v`. With an empty URI, or without Wi-Fi, nothing is sent; broker failures never stop the station.
 
 > **Updating from v1.x:** up to v1.9.1 the readings went to `weather-station/data`, without identifiers. Subscribers must move to `weather-station/<device_id>/data` (or `weather-station/+/data`). The station clears the old retained message on that topic.
 
@@ -127,7 +127,14 @@ The page shows the current values (refreshed at every measurement) and charts fr
 | `/api/current` | current values and identifiers as JSON |
 | `/api/info` | device, firmware, intervals and sensors as JSON (same as the MQTT info message) |
 | `/api/history?hours=24&points=150` | history of the last N hours as JSON, averaged into P points (defaults 24 and 150) |
-| `/history.csv` | the whole history as CSV, named `history-<device_id>.csv` |
+| `/history.csv` | the whole history as CSV, named `history-<device_id>.csv` (see below) |
+
+**Downloading the CSV:** the station sends the file gzip-compressed (about 5 times less data over Wi-Fi) to clients that ask for it, and they unpack it while saving, so the saved file is always the plain CSV. Browsers do this by themselves. With curl, `--compressed` asks for the compressed transfer and unpacks it; without it the file comes uncompressed, with the same content:
+
+```bash
+curl --compressed -o history.csv http://<ip>/history.csv   # faster
+curl -OJ --compressed http://<ip>/history.csv              # keeps the name history-<device_id>.csv
+```
 
 The page has no password and is read-only; anyone on the local network can see it. While the full CSV is downloading, the page pauses its updates (the server handles one request at a time).
 
@@ -215,6 +222,7 @@ main/
 ├── web_server.*  # HTTP server: page, JSON and CSV
 ├── health.*      # health log, `sys` command, network watchdog
 ├── identity.*    # device and sensor identifiers, station name
+├── gzip_stream.* # compact gzip compressor for the CSV download
 ├── charts.*      # chart tables (1 h / 24 h / 7 d) kept in RAM for the web page
 ├── web_page.html # the web page, embedded in the firmware
 ├── idf_component.yml  # external component: espressif/mqtt
@@ -229,5 +237,3 @@ The full functional specification is in [esp32-weather-station.md](esp32-weather
 - Sensor calibration
 - Hardware RTC module so the time survives power loss without Wi-Fi
 - A second sensor (the history format and the identifiers already allow it)
-- Compressed CSV download
-- Online/offline status via an MQTT last will

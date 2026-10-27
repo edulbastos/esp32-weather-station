@@ -24,6 +24,7 @@ namespace {
 esp_mqtt_client_handle_t s_client = nullptr;
 char s_data_topic[48] = "";
 char s_info_topic[48] = "";
+char s_status_topic[48] = "";
 TimerHandle_t s_retry_timer = nullptr;
 std::atomic<bool> s_client_started{false};
 std::atomic<bool> s_connected{false};
@@ -49,6 +50,8 @@ void on_mqtt_event(void *, esp_event_base_t, int32_t id, void *)
     case MQTT_EVENT_CONNECTED:
         ESP_LOGI(TAG, "Connected to MQTT broker %s as \"%s\"", config::MQTT_BROKER_URI, identity::device_id());
         s_connected = true;
+        // FR-6.7: replaces the last will "offline" of a previous connection.
+        esp_mqtt_client_publish(s_client, s_status_topic, config::MQTT_STATUS_ONLINE, 0, config::MQTT_QOS, true);
         telemetry::publish_info();
         // FR-10.4: subscribers of the topic used before v2.0.0 no longer get
         // a stale reading (empty retained message = delete).
@@ -139,6 +142,14 @@ esp_err_t start()
     cfg.credentials.client_id = identity::device_id();
     snprintf(s_data_topic, sizeof(s_data_topic), "%s/%s/data", config::MQTT_TOPIC_PREFIX, identity::device_id());
     snprintf(s_info_topic, sizeof(s_info_topic), "%s/%s/info", config::MQTT_TOPIC_PREFIX, identity::device_id());
+    snprintf(s_status_topic, sizeof(s_status_topic), "%s/%s/status", config::MQTT_TOPIC_PREFIX,
+             identity::device_id());
+    // FR-6.7: the broker publishes "offline" when the station stops answering
+    // (about 1.5 keepalive periods) or the connection drops.
+    cfg.session.last_will.topic = s_status_topic;
+    cfg.session.last_will.msg = config::MQTT_STATUS_OFFLINE;
+    cfg.session.last_will.qos = config::MQTT_QOS;
+    cfg.session.last_will.retain = true;
 
     s_client = esp_mqtt_client_init(&cfg);
     if (s_client == nullptr) {
