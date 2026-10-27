@@ -25,6 +25,10 @@ public:
     // Releases the I2C device handle.
     void deinit();
 
+    // FR-10.3: CRC-32 of the factory trimming parameters (dig_T1 .. dig_H6),
+    // which differ from chip to chip; valid after a successful init().
+    uint32_t fingerprint() const { return fingerprint_; }
+
     // Altitude estimate (m) from pressure and reference sea-level pressure.
     static float altitude_m(float pressure_hpa, float sea_level_hpa);
 
@@ -46,4 +50,5 @@ private:
     i2c_master_dev_handle_t dev_ = nullptr;
     Calibration cal_ = {};
     int32_t t_fine_ = 0;
+    uint32_t fingerprint_ = 0;
 };

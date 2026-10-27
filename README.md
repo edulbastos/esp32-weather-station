@@ -67,8 +67,9 @@ source ~/.espressif/tools/activate_idf_v6.1.sh
 
 # 2. Set the target (first time only)
 idf.py set-target esp32
-# 3. Set the Wi-Fi credentials and, optionally, the measurement interval, the
-#    MQTT broker and the history interval (first time only): "Weather Station" menu
+# 3. Set the Wi-Fi credentials and, optionally, the station name, the measurement
+#    interval, the MQTT broker and the history interval (first time only):
+#    "Weather Station" menu
 idf.py menuconfig
 
 # 4. Build
@@ -88,15 +89,27 @@ The timestamp appears once the clock has been synchronized via NTP. The Wi-Fi cr
 
 > **VS Code with the ESP-IDF extension:** turn off the setting `idf.enableUpdateSrcsToCMakeListsFile`. When it is on, the extension inserts every new `.c`/`.cpp` file into the nearest `CMakeLists.txt`, including the files of the downloaded MQTT component, and the build fails.
 
+## Identification
+
+Every station and every sensor has an identifier, so a management system can tell them apart and keep the data of several stations together:
+
+- **Device:** `ws-` followed by the board's MAC address, for example `ws-a0b76551a842`. It never changes, not even after reflashing.
+- **Sensor:** the type followed by a checksum of the chip's factory calibration data, for example `bme280-3fa91c07`. The BME280 has no serial number, but its calibration data differ from chip to chip, so a replaced sensor gets a new identifier; the station notices the replacement and logs it (`Sensor at position 0 (i2c@0x76) replaced: ...`).
+- **Name (optional):** a free-text name such as "Varanda", set in menuconfig ("Station name"). It is shown on the web page and in `sys`, but never used as a key.
+
+The identifiers appear in the boot log, in `sys`, on the web page, in every MQTT message and in every line of the history CSV.
+
 ## Sending data via MQTT
 
-With a broker URI set in menuconfig (for example `mqtt://192.168.1.10:1883`), the station publishes the latest reading every 60 s (configurable) to the topic `weather-station/data`, as JSON with QoS 1 (the broker confirms each message; unconfirmed ones are sent again after a reconnection) and the retain flag:
+With a broker URI set in menuconfig (for example `mqtt://192.168.1.10:1883`), the station publishes the latest reading every 60 s (configurable) to its own topic `weather-station/<device_id>/data`, as JSON with QoS 1 (the broker confirms each message; unconfirmed ones are sent again after a reconnection) and the retain flag:
 
 ```json
-{"time":1792161125,"temperature_c":23.41,"humidity_rh":56.12,"pressure_hpa":1012.84}
+{"device_id":"ws-a0b76551a842","sensor_id":"bme280-3fa91c07","time":1792161125,"temperature_c":23.41,"humidity_rh":56.12,"pressure_hpa":1012.84}
 ```
 
-`time` is the Unix time of the reading and appears once the clock has been synchronized. To watch the messages: `mosquitto_sub -h 192.168.1.10 -t weather-station/data -v`. With an empty URI, or without Wi-Fi, nothing is sent; broker failures never stop the station.
+`time` is the Unix time of the reading and appears once the clock has been synchronized. On every connection, and after a sensor replacement, the station also publishes a retained message to `weather-station/<device_id>/info` with its name, firmware version, intervals and sensors (with channels, units and resolution); a management system finds all stations by subscribing to `weather-station/+/info`. To watch everything: `mosquitto_sub -h 192.168.1.10 -t 'weather-station/#' -v`. With an empty URI, or without Wi-Fi, nothing is sent; broker failures never stop the station.
+
+> **Updating from v1.x:** up to v1.9.1 the readings went to `weather-station/data`, without identifiers. Subscribers must move to `weather-station/<device_id>/data` (or `weather-station/+/data`). The station clears the old retained message on that topic.
 
 ## Web page
 
@@ -111,33 +124,36 @@ The page shows the current values (refreshed at every measurement) and charts fr
 | Address | Content |
 |---|---|
 | `/` | the page |
-| `/api/current` | current values as JSON |
+| `/api/current` | current values and identifiers as JSON |
+| `/api/info` | device, firmware, intervals and sensors as JSON (same as the MQTT info message) |
 | `/api/history?hours=24&points=150` | history of the last N hours as JSON, averaged into P points (defaults 24 and 150) |
-| `/history.csv` | the whole history as CSV |
+| `/history.csv` | the whole history as CSV, named `history-<device_id>.csv` |
 
 The page has no password and is read-only; anyone on the local network can see it. While the full CSV is downloading, the page pauses its updates (the server handles one request at a time).
 
 ## Measurement history
 
-Every 60 s (configurable) the latest reading is stored in the `history` partition of the internal flash (5 MB, about 327,000 readings, roughly 7.5 months at 60 s). When it is full, the oldest readings are overwritten. The history survives restarts and power loss.
+Every 60 s (configurable) the latest reading is stored in the `history` partition of the internal flash (5 MB, about 325,000 readings, roughly 7.4 months at 60 s). When it is full, the oldest readings are overwritten. The history survives restarts and power loss. Each stored reading names the device and the sensor that took it.
 
 It is read in the serial monitor (`idf.py monitor`), at the `weather> ` prompt:
 
 | Command | What it does |
 |---|---|
-| `log info` | number of stored readings and space used |
+| `log info` | number of stored readings, space used, device and sensor |
 | `log dump 100` | the last 100 readings as CSV (`log dump` alone prints everything, which takes a while at 115200 baud) |
 | `log clear` | erases the history |
 | `help` | lists the commands |
 
 ```
-seq,time,temperature_c,humidity_rh,pressure_hpa
-1520,2026-10-16 14:31:00,23.41,56.12,1012.8
-1521,2026-10-16 14:32:00,23.44,56.05,1012.8
+device_id,sensor_id,seq,time,temperature_c,humidity_rh,pressure_hpa
+ws-a0b76551a842,bme280-3fa91c07,1520,2026-10-16 14:31:00,23.41,56.12,1012.8
+ws-a0b76551a842,bme280-3fa91c07,1521,2026-10-16 14:32:00,23.44,56.05,1012.8
 # 2 records
 ```
 
 To save the CSV on the PC, press `Ctrl+T` then `Ctrl+L` in the monitor before `log dump`: the output is saved to a log file in the current directory until the shortcut is pressed again.
+
+> **Updating from v1.x: download the history first.** v2.0.0 stores the history in a new format and does not read the old one: download `/history.csv` (or `log dump`) before flashing v2.0.0. The old data are ignored and overwritten as new readings arrive. Going back to a v1.x firmware afterwards needs `log clear`.
 
 > **Updating from v1.5.0 or earlier:** v1.6.0 uses its own partition table (`partitions.csv`). New checkouts get it from `sdkconfig.defaults`; in an existing local `sdkconfig`, choose it in `idf.py menuconfig` → "Partition Table" → "Custom partition table CSV" (file `partitions.csv`). `idf.py flash` writes the new table; the Wi-Fi settings are not lost.
 
@@ -145,15 +161,15 @@ To save the CSV on the PC, press `Ctrl+T` then `Ctrl+L` in the monitor before `l
 
 **Wi-Fi signal first.** The web page needs a signal of about −60 dBm or better (`sys` shows it, and the `health:` log line every 10 minutes). Around −65 to −75 dBm the link loses packets: the page and its charts can take seconds or stall. Move the station (or a mesh node) closer and keep the end of the ESP32 module, where the antenna is, free of cables and metal. Every Wi-Fi connection is logged with the access point, channel, channel width, security and signal, for example `Associated with "IoT" (ca:06:c3:51:a8:42), channel 6 HT20, WPA2, -57 dBm`, and every disconnection with the access point and the meaning of the reason, for example `Wi-Fi disconnected from "IoT" (ca:06:c3:51:a8:42, -61 dBm): reason 2, access point did not answer authentication`.
 
-In the serial monitor, `sys` shows the uptime, why the station last started, the free memory, the Wi-Fi link (signal, IP, gateway), the network watchdog (last sign of traffic and where it came from), the MQTT state and how many web requests were served. Every 10 minutes the same figures appear in the log as a `health:` line.
+In the serial monitor, `sys` shows the uptime, why the station last started, the free memory, the device and sensor identifiers and the firmware version, the Wi-Fi link (signal, IP, gateway), the network watchdog (last sign of traffic and where it came from), the MQTT state and how many web requests were served. Every 10 minutes the same figures appear in the log as a `health:` line.
 
 If Wi-Fi stays associated but no traffic gets through, the station notices it within about 3 minutes (every minute it looks for MQTT or web traffic, and pings the router only when there is none), reconnects Wi-Fi, and after two reconnections without success restarts itself. The history in flash is kept. After a restart, the first log lines show the reason (`health: Started by: software restart`).
 
-The MQTT client ID is `weather-station-` followed by the last 6 hex digits of the board's MAC address; it appears in the `Connected to MQTT broker ... as "..."` log line and in `sys`, which helps to find the station in the broker's log.
+The MQTT client ID is the device identifier (`ws-` followed by the board's MAC address); it appears in the `Connected to MQTT broker ... as "..."` log line and in `sys`, which helps to find the station in the broker's log.
 
 ## Configuration
 
-The measurement interval (1 to 3600 s, default 2 s), the Wi-Fi credentials, and the MQTT broker URI, user, password and publish interval (1 to 86400 s, default 60 s), the history log interval (1 to 86400 s, default 60 s), and the display switch-off after inactivity (0 to 1440 min, default 5 min) are set with `idf.py menuconfig` in the "Weather Station" menu.
+The station name, the measurement interval (1 to 3600 s, default 2 s), the Wi-Fi credentials, and the MQTT broker URI, user, password and publish interval (1 to 86400 s, default 60 s), the history log interval (1 to 86400 s, default 60 s), and the display switch-off after inactivity (0 to 1440 min, default 5 min) are set with `idf.py menuconfig` in the "Weather Station" menu.
 
 All other tunable parameters live in [main/config.h](main/config.h):
 
@@ -163,7 +179,7 @@ All other tunable parameters live in [main/config.h](main/config.h):
 - sea-level pressure used for the altitude estimate;
 - task periods, stack sizes and priorities;
 - NTP server, time zone (default UTC-3), Wi-Fi retry interval and signal icon thresholds;
-- MQTT topic, QoS, retain flag, reconnect interval and client ID prefix;
+- MQTT topic prefix, QoS, retain flag and reconnect interval;
 - Wi-Fi power save (off by default: some routers stop delivering packets to a sleeping ESP32);
 - history partition label and console prompt;
 - web server port, chart window, maximum points and connections.
@@ -198,10 +214,11 @@ main/
 ├── history.*     # measurement history in flash + `log` console command
 ├── web_server.*  # HTTP server: page, JSON and CSV
 ├── health.*      # health log, `sys` command, network watchdog
+├── identity.*    # device and sensor identifiers, station name
 ├── charts.*      # chart tables (1 h / 24 h / 7 d) kept in RAM for the web page
 ├── web_page.html # the web page, embedded in the firmware
 ├── idf_component.yml  # external component: espressif/mqtt
-└── Kconfig.projbuild  # menuconfig menu: intervals, Wi-Fi, MQTT broker
+└── Kconfig.projbuild  # menuconfig menu: name, intervals, Wi-Fi, MQTT broker
 partitions.csv    # flash layout: nvs, phy_init, factory app (2 MB), history (5 MB)
 ```
 
@@ -211,3 +228,6 @@ The full functional specification is in [esp32-weather-station.md](esp32-weather
 
 - Sensor calibration
 - Hardware RTC module so the time survives power loss without Wi-Fi
+- A second sensor (the history format and the identifiers already allow it)
+- Compressed CSV download
+- Online/offline status via an MQTT last will

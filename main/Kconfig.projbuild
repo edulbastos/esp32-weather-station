@@ -1,5 +1,14 @@
 menu "Weather Station"
 
+    config WS_DEVICE_NAME
+        string "Station name"
+        default ""
+        help
+            Free-text name of this station, e.g. "Varanda" (FR-10.2), up to
+            32 characters. For people only: shown by `sys`, on the web page
+            and in the MQTT info message. The station is identified by its
+            device identifier, derived from the MAC address (FR-10.1).
+
     config WS_MEASURE_PERIOD_S
         int "Measurement interval (seconds)"
         range 1 3600
@@ -13,7 +22,7 @@ menu "Weather Station"
         default 60
         help
             How often the latest measurement is stored in the flash history
-            (FR-7.2). With the 5 MB partition, 60 s keeps about 7.5 months.
+            (FR-7.2). With the 5 MB partition, 60 s keeps about 7.4 months.
 
     config WS_DISPLAY_TIMEOUT_MIN
         int "Display switch-off after inactivity (minutes)"

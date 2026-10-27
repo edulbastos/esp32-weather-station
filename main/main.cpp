@@ -32,6 +32,7 @@
 #include "freertos/task.h"
 #include "health.h"
 #include "history.h"
+#include "identity.h"
 #include "net_time.h"
 #include "ssd1306.h"
 #include "telemetry.h"
@@ -75,6 +76,17 @@ esp_err_t init_i2c_bus()
     bus_cfg.glitch_ignore_cnt = 7;
     bus_cfg.flags.enable_internal_pullup = config::I2C_INTERNAL_PULLUP;
     return i2c_new_master_bus(&bus_cfg, &s_bus);
+}
+
+// FR-10.3, FR-10.7: records the chip found at position 0 after every
+// successful initialization. The history writes a new sensor definition by
+// itself; the MQTT info message is sent again on a replacement.
+void register_sensor()
+{
+    const identity::Sensor s = {identity::SENSOR_BME280, 0, config::BME280_ADDR, s_sensor.fingerprint()};
+    if (identity::set_sensor(s)) {
+        telemetry::publish_info();  // fails harmlessly while not connected
+    }
 }
 
 // Logs every device that answers on the bus (helps diagnosing wrong addresses).
@@ -266,6 +278,7 @@ void taskMeasure(void *)
             if (err != ESP_OK && errors + 1 >= config::MAX_CONSECUTIVE_ERRORS) {
                 ESP_LOGW(TAG, "Re-initializing BME280");
                 if (s_sensor.init(s_bus, config::BME280_ADDR, config::I2C_FREQ_HZ) == ESP_OK) {
+                    register_sensor();
                     err = s_sensor.read(sample);
                 }
             }
@@ -621,6 +634,10 @@ extern "C" void app_main(void)
 {
     ESP_LOGI(TAG, "ESP32 Weather Station starting");
     health::log_reset_reason();  // NFR-2.4: shows watchdog restarts
+    // FR-10.1: device identifier and NVS, needed by everything below.
+    if (identity::init() != ESP_OK) {
+        ESP_LOGW(TAG, "MAC address unreadable, device identifier unavailable");
+    }
     init_status_led();
 
     esp_err_t err = init_i2c_bus();
@@ -650,6 +667,7 @@ extern "C" void app_main(void)
                  config::BME280_ADDR, esp_err_to_name(err));
         enter_error_mode("BME280 not found", true);
     }
+    register_sensor();
 
     s_i2c_mutex = xSemaphoreCreateMutex();
     s_data_mutex = xSemaphoreCreateMutex();

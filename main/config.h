@@ -2,6 +2,7 @@
 // All tunable values live here; do not hard-code them elsewhere.
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include "driver/gpio.h"
 #include "driver/i2c_types.h"
@@ -26,6 +27,13 @@ constexpr int            I2C_TIMEOUT_MS  = 100;          // per transaction
 // ---------------------------------------------------------------------------
 constexpr uint8_t BME280_ADDR  = 0x76;  // 0x76 (SDO=GND) or 0x77 (SDO=VCC)
 constexpr uint8_t SSD1306_ADDR = 0x3C;  // usually 0x3C, sometimes 0x3D
+
+// ---------------------------------------------------------------------------
+// Identification (FR-10.x)
+// ---------------------------------------------------------------------------
+// FR-10.2: free-text name, set via `idf.py menuconfig` -> "Weather Station"
+constexpr const char *DEVICE_NAME     = CONFIG_WS_DEVICE_NAME;
+constexpr size_t      DEVICE_NAME_MAX = 32;  // longer names are cut
 
 // ---------------------------------------------------------------------------
 // Display
@@ -85,14 +93,15 @@ constexpr esp_log_level_t WIFI_DRIVER_LOG_LEVEL = ESP_LOG_WARN;
 constexpr const char *MQTT_BROKER_URI     = CONFIG_WS_MQTT_BROKER_URI;
 constexpr const char *MQTT_USERNAME       = CONFIG_WS_MQTT_USERNAME;
 constexpr const char *MQTT_PASSWORD       = CONFIG_WS_MQTT_PASSWORD;
-constexpr const char *MQTT_TOPIC          = "weather-station/data";
+// FR-10.4: topics <prefix>/<device_id>/data and <prefix>/<device_id>/info
+constexpr const char *MQTT_TOPIC_PREFIX   = "weather-station";
+// Topic used before v2.0.0; its retained message is cleared on every connection
+constexpr const char *MQTT_LEGACY_TOPIC   = "weather-station/data";
 constexpr int         MQTT_QOS            = 1;     // 1 = acknowledged by the broker, resent if not
 constexpr bool        MQTT_RETAIN         = true;  // new subscribers get the last reading
 constexpr uint32_t    MQTT_RECONNECT_MS   = 10000;
 constexpr int         MQTT_KEEPALIVE_S    = 60;  // ESP-MQTT default 120
 constexpr uint32_t    MQTT_OUTBOX_LIMIT   = 4096;  // bytes of unacknowledged messages kept
-// Client ID = prefix + last 3 bytes of the Wi-Fi MAC, e.g. weather-station-51a842
-constexpr const char *MQTT_CLIENT_ID_PREFIX = "weather-station-";
 
 // ---------------------------------------------------------------------------
 // Measurement history in the internal flash (FR-7.x)
@@ -108,7 +117,7 @@ constexpr const char *CONSOLE_PROMPT      = "weather> ";
 constexpr uint16_t    WEB_SERVER_PORT        = 80;
 // Simultaneous connections; lwIP has 10 sockets, shared with MQTT and SNTP
 constexpr uint16_t    WEB_MAX_CLIENTS        = 4;
-constexpr uint16_t    WEB_MAX_ROUTES         = 10;    // registered URIs (7 in use)
+constexpr uint16_t    WEB_MAX_ROUTES         = 10;    // registered URIs (8 in use)
 constexpr uint16_t    WEB_SEND_TIMEOUT_S     = 15;    // give up sending after this
 constexpr uint32_t    WEB_HISTORY_HOURS      = 24;    // default window of /api/history
 constexpr uint32_t    WEB_HISTORY_MAX_HOURS  = 8760;  // limit of /api/history?hours= (1 year)
@@ -146,7 +155,7 @@ constexpr uint32_t    MQTT_PUBLISH_PERIOD_MS = CONFIG_WS_MQTT_PUBLISH_PERIOD_S *
 // FR-7.2: set via `idf.py menuconfig` -> "Weather Station" (default 60 s)
 constexpr uint32_t    LOG_PERIOD_MS       = CONFIG_WS_LOG_PERIOD_S * 1000;
 
-constexpr uint32_t    MEASURE_TASK_STACK  = 4096;
+constexpr uint32_t    MEASURE_TASK_STACK  = 5120;  // MQTT info message on a sensor change
 constexpr uint32_t    DISPLAY_TASK_STACK  = 4096;
 constexpr uint32_t    PUBLISH_TASK_STACK  = 4096;
 constexpr uint32_t    LOG_TASK_STACK      = 4096;

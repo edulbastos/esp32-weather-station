@@ -86,6 +86,7 @@
   <footer>
     <a href="/history.csv" download>Download the full history (CSV)</a>
     · <span id="history-info"></span>
+    <div id="station"></div>
   </footer>
 </main>
 
@@ -140,6 +141,15 @@ function setStatus(text, error) {
   $("status").classList.toggle("error", !!error);
 }
 
+// FR-10.5: the station's name (or identifier) in the tab title, and its
+// device and sensor identifiers in the footer.
+function showStation(d) {
+  const label = d.name || d.device_id;
+  document.title = label + " · Weather Station";
+  $("station").textContent = (d.name ? d.name + " · " : "") + "device " + d.device_id +
+    (d.sensor_id ? " · sensor " + d.sensor_id : "");
+}
+
 // FR-8.2: current values, refreshed at the measurement interval. Each new
 // measurement is also added to the charts (FR-8.4).
 async function loadCurrent() {
@@ -152,6 +162,7 @@ async function loadCurrent() {
     const d = await r.json();
     if (gen !== currentGen) return;
     measurePeriod = d.measure_period_s;
+    showStation(d);
     delay = Math.max(1000, d.measure_period_s * 1000);
     const wifi = d.wifi_level > 0 ? " · Wi-Fi " + "▂▄▆".slice(0, d.wifi_level) : "";
     if (d.valid) {

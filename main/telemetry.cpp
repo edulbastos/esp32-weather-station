@@ -6,11 +6,11 @@
 #include "config.h"
 #include "esp_event.h"
 #include "esp_log.h"
-#include "esp_mac.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/timers.h"
+#include "identity.h"
 #include "mqtt_client.h"
 
 static const char *TAG = "telemetry";
@@ -22,7 +22,8 @@ namespace {
 // does not try at all while Wi-Fi is down, and reconnects at once when the
 // IP address comes back.
 esp_mqtt_client_handle_t s_client = nullptr;
-char s_client_id[40] = "";
+char s_data_topic[48] = "";
+char s_info_topic[48] = "";
 TimerHandle_t s_retry_timer = nullptr;
 std::atomic<bool> s_client_started{false};
 std::atomic<bool> s_connected{false};
@@ -46,8 +47,12 @@ void on_mqtt_event(void *, esp_event_base_t, int32_t id, void *)
 {
     switch (static_cast<esp_mqtt_event_id_t>(id)) {
     case MQTT_EVENT_CONNECTED:
-        ESP_LOGI(TAG, "Connected to MQTT broker %s as \"%s\"", config::MQTT_BROKER_URI, s_client_id);
+        ESP_LOGI(TAG, "Connected to MQTT broker %s as \"%s\"", config::MQTT_BROKER_URI, identity::device_id());
         s_connected = true;
+        telemetry::publish_info();
+        // FR-10.4: subscribers of the topic used before v2.0.0 no longer get
+        // a stale reading (empty retained message = delete).
+        esp_mqtt_client_publish(s_client, config::MQTT_LEGACY_TOPIC, "", 0, config::MQTT_QOS, true);
         break;
     case MQTT_EVENT_DISCONNECTED: {
         // Also sent after every failed connection attempt.
@@ -127,12 +132,10 @@ esp_err_t start()
     // them and are resent after a reconnection; bound the memory they use.
     cfg.outbox.limit = config::MQTT_OUTBOX_LIMIT;
 
-    // Fixed, readable client ID, unique per board (from the MAC address).
-    uint8_t mac[6] = {};
-    esp_read_mac(mac, ESP_MAC_WIFI_STA);
-    snprintf(s_client_id, sizeof(s_client_id), "%s%02x%02x%02x", config::MQTT_CLIENT_ID_PREFIX, mac[3], mac[4],
-             mac[5]);
-    cfg.credentials.client_id = s_client_id;
+    // FR-10.1: the client ID is the device identifier.
+    cfg.credentials.client_id = identity::device_id();
+    snprintf(s_data_topic, sizeof(s_data_topic), "%s/%s/data", config::MQTT_TOPIC_PREFIX, identity::device_id());
+    snprintf(s_info_topic, sizeof(s_info_topic), "%s/%s/info", config::MQTT_TOPIC_PREFIX, identity::device_id());
 
     s_client = esp_mqtt_client_init(&cfg);
     if (s_client == nullptr) {
@@ -150,7 +153,7 @@ esp_err_t start()
     }
     if (err == ESP_OK) {
         ESP_LOGI(TAG, "Publishing to %s, topic \"%s\", every %lu ms", config::MQTT_BROKER_URI,
-                 config::MQTT_TOPIC, static_cast<unsigned long>(config::MQTT_PUBLISH_PERIOD_MS));
+                 s_data_topic, static_cast<unsigned long>(config::MQTT_PUBLISH_PERIOD_MS));
     }
     return err;
 }
@@ -159,7 +162,7 @@ bool enabled() { return s_client != nullptr; }
 
 bool connected() { return s_connected; }
 
-const char *client_id() { return s_client_id; }
+const char *client_id() { return identity::device_id(); }
 
 esp_err_t publish(const Bme280Data &data, time_t sample_time)
 {
@@ -167,22 +170,45 @@ esp_err_t publish(const Bme280Data &data, time_t sample_time)
         return ESP_ERR_INVALID_STATE;
     }
 
-    // FR-6.3: JSON payload, the time is left out until the clock is synchronized.
+    // FR-6.3, FR-10.4: JSON payload with the device and sensor identifiers;
+    // the time is left out until the clock is synchronized.
     char time_field[32] = "";
     if (sample_time != 0) {
         snprintf(time_field, sizeof(time_field), "\"time\":%" PRId64 ",", static_cast<int64_t>(sample_time));
     }
-    char payload[160];
+    char sensor_id[24];
+    identity::sensor_id(0, sensor_id, sizeof(sensor_id));
+    char payload[256];
     const int len = snprintf(payload, sizeof(payload),
-                             "{%s\"temperature_c\":%.2f,\"humidity_rh\":%.2f,\"pressure_hpa\":%.2f}",
-                             time_field, data.temperature_c, data.humidity_rh, data.pressure_hpa);
+                             "{\"device_id\":\"%s\",\"sensor_id\":\"%s\",%s\"temperature_c\":%.2f,"
+                             "\"humidity_rh\":%.2f,\"pressure_hpa\":%.2f}",
+                             identity::device_id(), sensor_id, time_field, data.temperature_c, data.humidity_rh,
+                             data.pressure_hpa);
 
-    const int id = esp_mqtt_client_publish(s_client, config::MQTT_TOPIC, payload, len,
+    const int id = esp_mqtt_client_publish(s_client, s_data_topic, payload, len,
                                            config::MQTT_QOS, config::MQTT_RETAIN);
     if (id < 0) {
         return ESP_FAIL;
     }
     ESP_LOGI(TAG, "Published %s", payload);
+    return ESP_OK;
+}
+
+esp_err_t publish_info()
+{
+    if (!s_connected) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    char payload[768];
+    const int len = identity::info_json(payload, sizeof(payload));
+    if (len < 0 || static_cast<size_t>(len) >= sizeof(payload)) {
+        ESP_LOGE(TAG, "Info message does not fit %u bytes", static_cast<unsigned>(sizeof(payload)));
+        return ESP_ERR_INVALID_SIZE;
+    }
+    if (esp_mqtt_client_publish(s_client, s_info_topic, payload, len, config::MQTT_QOS, true) < 0) {
+        return ESP_FAIL;
+    }
+    ESP_LOGI(TAG, "Published info to %s", s_info_topic);
     return ESP_OK;
 }
 

@@ -96,7 +96,8 @@ void rebuild_from_history()
                                                   config::LOG_PERIOD_MS + 1);
     uint32_t used = 0;
     const esp_err_t err = history::visit(last_n, [&used](const history::Entry &e) {
-        if (e.time != 0) {
+        // FR-10.5: the charts show the sensor at position 0, whatever chip.
+        if (e.time != 0 && e.sensor_index == 0) {
             add(e.time, Bme280Data{e.temperature_c, e.humidity_rh, e.pressure_hpa});
             used++;
         }

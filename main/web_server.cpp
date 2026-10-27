@@ -16,6 +16,7 @@
 #include "lwip/sockets.h"
 #include "charts.h"
 #include "history.h"
+#include "identity.h"
 #include "net_time.h"
 
 static const char *TAG = "web";
@@ -131,7 +132,7 @@ esp_err_t handle_favicon(httpd_req_t *req)
     return httpd_resp_send(req, nullptr, 0);
 }
 
-// FR-8.3: current values as JSON.
+// FR-8.3, FR-10.5: current values and identifiers as JSON.
 esp_err_t handle_current(httpd_req_t *req)
 {
     web_server::Current cur = {};
@@ -139,14 +140,20 @@ esp_err_t handle_current(httpd_req_t *req)
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Data busy, try again");
     }
 
-    char json[320];
+    char json[640];
     char time_field[24] = "null";
     if (cur.time != 0) {
         snprintf(time_field, sizeof(time_field), "%lld", static_cast<long long>(cur.time));
     }
+    char sensor_id[24];
+    identity::sensor_id(0, sensor_id, sizeof(sensor_id));
+    const int n = snprintf(json, sizeof(json), "{\"device_id\":\"%s\",\"name\":\"%s\",\"sensor_id\":\"%s\",",
+                           identity::device_id(), identity::device_name_json(), sensor_id);
+    char *rest = json + n;
+    const size_t rest_len = sizeof(json) - n;
     if (cur.valid) {
-        snprintf(json, sizeof(json),
-                 "{\"valid\":true,\"time\":%s,\"age_s\":%.1f,\"temperature_c\":%.2f,"
+        snprintf(rest, rest_len,
+                 "\"valid\":true,\"time\":%s,\"age_s\":%.1f,\"temperature_c\":%.2f,"
                  "\"humidity_rh\":%.2f,\"pressure_hpa\":%.2f,\"wifi_level\":%d,"
                  "\"measure_period_s\":%lu,\"log_period_s\":%lu}",
                  time_field, cur.age_ms / 1000.0, cur.values.temperature_c, cur.values.humidity_rh,
@@ -154,14 +161,27 @@ esp_err_t handle_current(httpd_req_t *req)
                  static_cast<unsigned long>(config::MEASURE_PERIOD_MS / 1000),
                  static_cast<unsigned long>(config::LOG_PERIOD_MS / 1000));
     } else {
-        snprintf(json, sizeof(json),
-                 "{\"valid\":false,\"wifi_level\":%d,\"measure_period_s\":%lu,\"log_period_s\":%lu}",
+        snprintf(rest, rest_len,
+                 "\"valid\":false,\"wifi_level\":%d,\"measure_period_s\":%lu,\"log_period_s\":%lu}",
                  net_time::wifi_level(), static_cast<unsigned long>(config::MEASURE_PERIOD_MS / 1000),
                  static_cast<unsigned long>(config::LOG_PERIOD_MS / 1000));
     }
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     return httpd_resp_sendstr(req, json);
+}
+
+// FR-10.5: the info message of FR-10.4 (device, firmware, intervals, sensors).
+esp_err_t handle_info(httpd_req_t *req)
+{
+    char json[768];
+    const int n = identity::info_json(json, sizeof(json));
+    if (n < 0 || static_cast<size_t>(n) >= sizeof(json)) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Info does not fit");
+    }
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    return httpd_resp_send(req, json, n);
 }
 
 // FR-8.4: the last `hours` hours as JSON, averaged into at most `points`
@@ -247,7 +267,7 @@ esp_err_t handle_history(httpd_req_t *req)
     };
 
     const esp_err_t err = history::visit(last_n, [&](const history::Entry &e) {
-        if (e.time == 0) {
+        if (e.time == 0 || e.sensor_index != 0) {  // FR-10.5: sensor at position 0
             return true;
         }
         if (base == 0) {
@@ -278,15 +298,17 @@ esp_err_t handle_history(httpd_req_t *req)
     return out.finish();
 }
 
-// FR-8.5: the whole history as a CSV download.
+// FR-8.5, FR-10.5: the whole history as a CSV download named after the device.
 esp_err_t handle_csv(httpd_req_t *req)
 {
+    char disposition[64];
+    snprintf(disposition, sizeof(disposition), "attachment; filename=\"history-%s.csv\"", identity::device_id());
     httpd_resp_set_type(req, "text/csv");
-    httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=\"weather-history.csv\"");
+    httpd_resp_set_hdr(req, "Content-Disposition", disposition);
     ChunkWriter out(req);
     out.write(history::CSV_HEADER, strlen(history::CSV_HEADER));
     const esp_err_t err = history::visit(0, [&out](const history::Entry &e) {
-        char line[80];
+        char line[128];
         const int n = history::format_csv(e, line, sizeof(line));
         return n > 0 && out.write(line, std::min<size_t>(n, sizeof(line) - 1));
     });
@@ -351,6 +373,7 @@ esp_err_t start_server()
     } routes[] = {
         {"/", handle_page},
         {"/api/current", handle_current},
+        {"/api/info", handle_info},
         {"/api/history", handle_history},
         {"/history.csv", handle_csv},
         {"/favicon.ico", handle_favicon},

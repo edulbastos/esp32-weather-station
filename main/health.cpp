@@ -12,6 +12,7 @@
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "identity.h"
 #include "lwip/ip_addr.h"
 #include "net_time.h"
 #include "ping/ping_sock.h"
@@ -257,6 +258,17 @@ int cmd_sys(int, char **)
         }
         printf(", failed checks %d, forced reconnects %d\n", s_failed_checks.load(), s_forced_reconnects.load());
     }
+    // FR-10.1 .. FR-10.3
+    printf("Device: %s%s%s%s, firmware %s\n", identity::device_id(), identity::device_name()[0] ? " (\"" : "",
+           identity::device_name(), identity::device_name()[0] ? "\")" : "", identity::firmware_version());
+    for (size_t i = 0; i < identity::SENSOR_COUNT; i++) {
+        identity::Sensor s;
+        if (identity::sensor(i, s)) {
+            char id[24];
+            identity::format_sensor_id(s.type, s.fingerprint, id, sizeof(id));
+            printf("Sensor %u: %s at i2c@0x%02x\n", static_cast<unsigned>(i), id, s.address);
+        }
+    }
     if (telemetry::enabled()) {
         printf("MQTT: %s, client ID \"%s\"\n", telemetry::connected() ? "connected" : "disconnected",
                telemetry::client_id());
@@ -284,7 +296,7 @@ esp_err_t register_console_command()
 {
     esp_console_cmd_t cmd = {};
     cmd.command = "sys";
-    cmd.help = "System health: uptime, last start reason, heap, Wi-Fi, gateway ping, MQTT, web";
+    cmd.help = "System health: uptime, last start reason, heap, Wi-Fi, gateway ping, device and sensor, MQTT, web";
     cmd.func = cmd_sys;
     return esp_console_cmd_register(&cmd);
 }

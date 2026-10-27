@@ -1,8 +1,10 @@
 #include "bme280.h"
 
 #include <cmath>
+#include <cstring>
 #include "config.h"
 #include "esp_log.h"
+#include "esp_rom_crc.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -155,6 +157,13 @@ esp_err_t Bme280::read_calibration()
     cal_.h4 = static_cast<int16_t>((static_cast<int8_t>(h[3]) * 16) | (h[4] & 0x0F));
     cal_.h5 = static_cast<int16_t>((static_cast<int8_t>(h[5]) * 16) | (h[4] >> 4));
     cal_.h6 = static_cast<int8_t>(h[6]);
+
+    // FR-10.3: 0x88..0x9F, 0xA1 and 0xE1..0xE7 (0xA0 is not documented).
+    uint8_t trim[32];
+    memcpy(trim, c, 24);
+    trim[24] = c[25];
+    memcpy(trim + 25, h, sizeof(h));
+    fingerprint_ = esp_rom_crc32_le(0, trim, sizeof(trim));
     return ESP_OK;
 }
 

@@ -1,4 +1,4 @@
-// Web page on the local network (FR-8.1 .. FR-8.6).
+// Web page on the local network (FR-8.1 .. FR-8.7, FR-10.5).
 // HTTP server on port 80, started once Wi-Fi has an IP address: the page,
 // the current values and the history as JSON, and the history as CSV.
 // Read-only; failures are never critical for the station.
