@@ -13,3 +13,8 @@ CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 # Partition table with the measurement history partition (FR-7.1)
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# Network: TCP send buffer of 8 MSS instead of 4, so a long transfer (the
+# history CSV, FR-8.6) keeps more data in flight and recovers faster from a
+# lost packet. Costs RAM only while data are waiting to be acknowledged.
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=11520

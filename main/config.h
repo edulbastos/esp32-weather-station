@@ -101,6 +101,9 @@ constexpr int         MQTT_QOS            = 1;     // 1 = acknowledged by the br
 constexpr bool        MQTT_RETAIN         = true;  // new subscribers get the last reading
 constexpr uint32_t    MQTT_RECONNECT_MS   = 10000;
 constexpr int         MQTT_KEEPALIVE_S    = 60;  // ESP-MQTT default 120
+// A send that makes no progress for this long drops the connection
+// (ESP-MQTT default 10 s); covers link stalls of up to about 30 s.
+constexpr int         MQTT_NETWORK_TIMEOUT_MS = 30000;
 constexpr uint32_t    MQTT_OUTBOX_LIMIT   = 4096;  // bytes of unacknowledged messages kept
 
 // ---------------------------------------------------------------------------
@@ -119,6 +122,10 @@ constexpr uint16_t    WEB_SERVER_PORT        = 80;
 constexpr uint16_t    WEB_MAX_CLIENTS        = 4;
 constexpr uint16_t    WEB_MAX_ROUTES         = 10;    // registered URIs (8 in use)
 constexpr uint16_t    WEB_SEND_TIMEOUT_S     = 15;    // give up sending after this
+constexpr size_t      WEB_CHUNK_BYTES        = 1024;  // chunk size of the JSON answers
+constexpr size_t      WEB_CSV_CHUNK_BYTES    = 4096;  // chunk size of /history.csv
+// The TCP send buffer (CONFIG_LWIP_TCP_SND_BUF_DEFAULT, 11520 bytes = 8 MSS
+// in sdkconfig.defaults) bounds how much can be in flight per connection.
 constexpr uint32_t    WEB_HISTORY_HOURS      = 24;    // default window of /api/history
 constexpr uint32_t    WEB_HISTORY_MAX_HOURS  = 8760;  // limit of /api/history?hours= (1 year)
 constexpr uint32_t    WEB_CHART_POINTS       = 150;   // points per chart, averaged

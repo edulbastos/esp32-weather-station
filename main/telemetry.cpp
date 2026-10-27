@@ -128,6 +128,9 @@ esp_err_t start()
     // 1.5 keepalive periods (ping after half a period, then a full period);
     // shorter stalls are ridden out.
     cfg.session.keepalive = config::MQTT_KEEPALIVE_S;
+    // FR-6.5: a short stall of the link (seen at about -65 dBm) blocks a send
+    // for seconds; the default 10 s then dropped the connection.
+    cfg.network.timeout_ms = config::MQTT_NETWORK_TIMEOUT_MS;
     // FR-6.4: QoS 1 messages stay in the outbox until the broker confirms
     // them and are resent after a reconnection; bound the memory they use.
     cfg.outbox.limit = config::MQTT_OUTBOX_LIMIT;

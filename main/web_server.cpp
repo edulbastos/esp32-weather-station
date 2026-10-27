@@ -35,21 +35,27 @@ httpd_handle_t s_server = nullptr;
 std::atomic<bool> s_starting{false};
 std::atomic<uint32_t> s_requests{0};
 
-// Collects the response in a small buffer and sends it in chunks, so large
-// answers (the whole history) never have to fit in RAM.
+// Collects the response in a buffer on the heap and sends it in chunks of
+// `size` bytes, so large answers (the whole history) never have to fit in RAM.
 class ChunkWriter {
 public:
-    explicit ChunkWriter(httpd_req_t *req) : req_(req) {}
+    explicit ChunkWriter(httpd_req_t *req, size_t size = config::WEB_CHUNK_BYTES)
+        : req_(req), buf_(new (std::nothrow) char[size]), size_(size), ok_(buf_ != nullptr)
+    {
+        if (!ok_) {
+            ESP_LOGE(TAG, "No memory for a %u-byte answer buffer", static_cast<unsigned>(size));
+        }
+    }
 
     bool write(const char *data, size_t len)
     {
         while (ok_ && len > 0) {
-            const size_t n = std::min(len, sizeof(buf_) - used_);
-            memcpy(buf_ + used_, data, n);
+            const size_t n = std::min(len, size_ - used_);
+            memcpy(buf_.get() + used_, data, n);
             used_ += n;
             data += n;
             len -= n;
-            if (used_ == sizeof(buf_)) {
+            if (used_ == size_) {
                 flush();
             }
         }
@@ -90,15 +96,16 @@ private:
     {
         if (ok_ && used_ > 0) {
             // A failure means the client went away; stop producing data.
-            ok_ = httpd_resp_send_chunk(req_, buf_, used_) == ESP_OK;
+            ok_ = httpd_resp_send_chunk(req_, buf_.get(), used_) == ESP_OK;
         }
         used_ = 0;
     }
 
     httpd_req_t *req_;
-    char buf_[1024];
+    std::unique_ptr<char[]> buf_;
+    size_t size_;
     size_t used_ = 0;
-    bool ok_ = true;
+    bool ok_;
 };
 
 bool accepts_gzip(httpd_req_t *req)
@@ -305,7 +312,13 @@ esp_err_t handle_csv(httpd_req_t *req)
     snprintf(disposition, sizeof(disposition), "attachment; filename=\"history-%s.csv\"", identity::device_id());
     httpd_resp_set_type(req, "text/csv");
     httpd_resp_set_hdr(req, "Content-Disposition", disposition);
-    ChunkWriter out(req);
+    // FR-8.6: ESP-IDF sends every chunk in three pieces (size line, data,
+    // CRLF). With TCP_NODELAY each piece is a segment of its own, so a long
+    // download sent three packets per chunk, two of them tiny. Nagle's
+    // algorithm merges them again; while data keep flowing it adds no delay.
+    const int off = 0;
+    setsockopt(httpd_req_to_sockfd(req), IPPROTO_TCP, TCP_NODELAY, &off, sizeof(off));
+    ChunkWriter out(req, config::WEB_CSV_CHUNK_BYTES);
     out.write(history::CSV_HEADER, strlen(history::CSV_HEADER));
     const esp_err_t err = history::visit(0, [&out](const history::Entry &e) {
         char line[128];
