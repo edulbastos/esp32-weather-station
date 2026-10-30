@@ -15,7 +15,7 @@ The project is built with ESP-IDF (v6.1) and uses FreeRTOS to run sensor measure
 ## Project Structure
 
 *   `CMakeLists.txt`: ESP-IDF project file.
-*   `sdkconfig.defaults`: Default configuration (target `esp32`, console at 115200 baud, custom partition table, TCP send buffer of 8 MSS). It only applies to settings missing from the local `sdkconfig`; a changed default has to be set in an existing `sdkconfig` too (`idf.py menuconfig`).
+*   `sdkconfig.defaults`: Default configuration (target `esp32`, console at 115200 baud, custom partition table, TCP send buffer of 8 MSS, `SO_LINGER` to reset a failed web connection, 6 TCP retransmissions). It only applies to settings missing from the local `sdkconfig`; a changed default has to be set in an existing `sdkconfig` too (`idf.py menuconfig`).
 *   `partitions.csv`: Flash layout (8 MB): `nvs`, `phy_init`, app `factory` (2 MB) and the `history` data partition (5 MB).
 *   `images/`: Photos shown in `README.md` (the station, the web page).
 *   `main/config.h`: Central configuration (I2C pins and addresses, display size, sea-level pressure, task periods, stack sizes and priorities).

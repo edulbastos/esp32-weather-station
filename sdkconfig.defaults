@@ -18,3 +18,10 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 # history CSV, FR-8.6) keeps more data in flight and recovers faster from a
 # lost packet. Costs RAM only while data are waiting to be acknowledged.
 CONFIG_LWIP_TCP_SND_BUF_DEFAULT=11520
+
+# Network: on a stalled link, memory held by dead connections is freed
+# sooner (FR-8.6): SO_LINGER, so the web server can reset a connection whose
+# send failed and drop its unsent data, and 6 retransmissions instead of 12
+# (a few minutes instead of over 10).
+CONFIG_LWIP_SO_LINGER=y
+CONFIG_LWIP_TCP_MAXRTX=6

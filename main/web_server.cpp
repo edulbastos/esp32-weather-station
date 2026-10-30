@@ -362,6 +362,15 @@ esp_err_t handle_and_close(httpd_req_t *req)
     // On failure the server already closes the session itself.
     if (err == ESP_OK) {
         httpd_sess_trigger_close(req->handle, httpd_req_to_sockfd(req));
+    } else {
+        // The client stopped taking data. A normal close would leave the
+        // unsent data (up to the TCP send buffer) to lwIP, which retransmits
+        // them for minutes; a few such connections used up the heap. A zero
+        // linger time makes the close reset the connection and free them.
+        // Not used for every close: lingering blocks the server until the
+        // client acknowledges, which iOS delays.
+        const struct linger reset = {1, 0};
+        setsockopt(httpd_req_to_sockfd(req), SOL_SOCKET, SO_LINGER, &reset, sizeof(reset));
     }
     return err;
 }
