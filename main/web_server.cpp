@@ -12,6 +12,7 @@
 #include "esp_event.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "esp_netif.h"
 #include "lwip/sockets.h"
 #include "charts.h"
@@ -37,12 +38,41 @@ httpd_handle_t s_server = nullptr;
 std::atomic<bool> s_starting{false};
 std::atomic<uint32_t> s_requests{0};
 
-// Collects the response in a buffer on the heap and sends it in chunks of
-// `size` bytes, so large answers (the whole history) never have to fit in RAM.
+std::atomic<size_t> s_answer_bytes{0};  // of the request being handled (one at a time)
+constexpr const char *NO_STORE = "Cache-Control: no-store\r\n";
+
+uint32_t now_ms() { return static_cast<uint32_t>(esp_timer_get_time() / 1000); }
+
+// Sends `len` bytes; the socket may take them in several parts.
+bool send_all(httpd_req_t *req, const char *data, size_t len)
+{
+    while (len > 0) {
+        const int n = httpd_send(req, data, len);
+        if (n <= 0) {
+            return false;
+        }
+        data += n;
+        len -= n;
+    }
+    return true;
+}
+
+// FR-8.6: collects the answer in a buffer on the heap and sends it with one
+// write per buffer: status line, headers and body together, so lwIP fills
+// whole segments. ESP-IDF's own response functions send every header field,
+// separator and line break with a write of its own; with TCP_NODELAY each
+// became a packet, about 11 for a small JSON answer, and on a lossy link
+// every packet is a chance to wait for a retransmission. An answer that fits
+// the buffer goes out with Content-Length in a single write; a longer one is
+// sent chunked, one chunk of `size` bytes per write, so large answers (the
+// whole history) never have to fit in RAM. `headers` holds extra header
+// lines, each ending with CRLF.
 class ChunkWriter {
 public:
-    explicit ChunkWriter(httpd_req_t *req, size_t size = config::WEB_CHUNK_BYTES)
-        : req_(req), buf_(new (std::nothrow) char[size]), size_(size), ok_(buf_ != nullptr)
+    ChunkWriter(httpd_req_t *req, const char *type, const char *headers = "",
+                size_t size = config::WEB_CHUNK_BYTES)
+        : req_(req), type_(type), headers_(headers),
+          buf_(new (std::nothrow) char[HEAD_ROOM + size + TAIL_ROOM]), size_(size), ok_(buf_ != nullptr)
     {
         if (!ok_) {
             ESP_LOGE(TAG, "No memory for a %u-byte answer buffer", static_cast<unsigned>(size));
@@ -53,12 +83,12 @@ public:
     {
         while (ok_ && len > 0) {
             const size_t n = std::min(len, size_ - used_);
-            memcpy(buf_.get() + used_, data, n);
+            memcpy(body() + used_, data, n);
             used_ += n;
             data += n;
             len -= n;
             if (used_ == size_) {
-                flush();
+                send(false);
             }
         }
         return ok_;
@@ -83,30 +113,77 @@ public:
         return write(line, n);
     }
 
-    // Sends what is left and ends the chunked response.
+    // Sends what is left and ends the answer.
     esp_err_t finish()
     {
-        flush();
         if (ok_) {
-            ok_ = httpd_resp_send_chunk(req_, nullptr, 0) == ESP_OK;
+            send(true);
         }
         return ok_ ? ESP_OK : ESP_FAIL;
     }
 
 private:
-    void flush()
+    // Room for the status line and headers, and for a chunk size line,
+    // before the body; for the chunk end and the last chunk after it.
+    static constexpr size_t HEAD_ROOM = 384;
+    static constexpr size_t TAIL_ROOM = 8;  // "\r\n" + "0\r\n\r\n"
+
+    char *body() { return buf_.get() + HEAD_ROOM; }
+
+    // Puts the headers (first write only) and the chunk framing around the
+    // buffered body and sends it all with one write.
+    void send(bool last)
     {
-        if (ok_ && used_ > 0) {
-            // A failure means the client went away; stop producing data.
-            ok_ = httpd_resp_send_chunk(req_, buf_.get(), used_) == ESP_OK;
+        char *start = body();
+        char *end = body() + used_;
+        const bool chunked = started_ || !last;
+        if (chunked) {
+            if (used_ > 0) {
+                char size_line[12];
+                const int n = snprintf(size_line, sizeof(size_line), "%x\r\n", static_cast<unsigned>(used_));
+                start -= n;
+                memcpy(start, size_line, n);
+                memcpy(end, "\r\n", 2);
+                end += 2;
+            }
+            if (last) {
+                memcpy(end, "0\r\n\r\n", 5);
+                end += 5;
+            }
         }
+        if (!started_) {
+            char head[HEAD_ROOM - 16];
+            char length[40];
+            if (chunked) {
+                snprintf(length, sizeof(length), "Transfer-Encoding: chunked\r\n");
+            } else {
+                snprintf(length, sizeof(length), "Content-Length: %u\r\n", static_cast<unsigned>(used_));
+            }
+            const int n = snprintf(head, sizeof(head),
+                                   "HTTP/1.1 200 OK\r\nContent-Type: %s\r\n%sConnection: close\r\n%s\r\n", type_,
+                                   length, headers_);
+            if (n < 0 || static_cast<size_t>(n) >= sizeof(head)) {
+                ESP_LOGE(TAG, "Answer headers do not fit %u bytes", static_cast<unsigned>(sizeof(head)));
+                ok_ = false;
+                return;
+            }
+            start -= n;
+            memcpy(start, head, n);
+            started_ = true;
+        }
+        // A failure means the client went away; stop producing data.
+        ok_ = send_all(req_, start, end - start);
+        s_answer_bytes += end - start;
         used_ = 0;
     }
 
     httpd_req_t *req_;
+    const char *type_;
+    const char *headers_;
     std::unique_ptr<char[]> buf_;
     size_t size_;
     size_t used_ = 0;
+    bool started_ = false;  // headers sent
     bool ok_;
 };
 
@@ -122,13 +199,15 @@ bool accepts_gzip(httpd_req_t *req)
 // packets have to cross the Wi-Fi link.
 esp_err_t handle_page(httpd_req_t *req)
 {
-    httpd_resp_set_type(req, "text/html; charset=utf-8");
-    httpd_resp_set_hdr(req, "Vary", "Accept-Encoding");
-    if (accepts_gzip(req)) {
-        httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
-        return httpd_resp_send(req, web_page_gz_start, web_page_gz_end - web_page_gz_start);
+    const bool gzip = accepts_gzip(req);
+    ChunkWriter out(req, "text/html; charset=utf-8",
+                    gzip ? "Vary: Accept-Encoding\r\nContent-Encoding: gzip\r\n" : "Vary: Accept-Encoding\r\n");
+    if (gzip) {
+        out.write(web_page_gz_start, web_page_gz_end - web_page_gz_start);
+    } else {
+        out.write(web_page_start, web_page_end - web_page_start);
     }
-    return httpd_resp_send(req, web_page_start, web_page_end - web_page_start);
+    return out.finish();
 }
 
 // FR-8.2: browsers that ask for /favicon.ico anyway, and Safari on iOS asking
@@ -187,9 +266,9 @@ esp_err_t handle_current(httpd_req_t *req)
                  net_time::wifi_level(), rssi_field, static_cast<unsigned long>(config::MEASURE_PERIOD_MS / 1000),
                  static_cast<unsigned long>(config::LOG_PERIOD_MS / 1000));
     }
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-    return httpd_resp_sendstr(req, json);
+    ChunkWriter out(req, "application/json", NO_STORE);
+    out.write(json, strlen(json));
+    return out.finish();
 }
 
 // FR-10.5: the info message of FR-10.4 (device, firmware, intervals, sensors).
@@ -200,9 +279,51 @@ esp_err_t handle_info(httpd_req_t *req)
     if (n < 0 || static_cast<size_t>(n) >= sizeof(json)) {
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Info does not fit");
     }
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-    return httpd_resp_send(req, json, n);
+    ChunkWriter out(req, "application/json", NO_STORE);
+    out.write(json, n);
+    return out.finish();
+}
+
+// FR-8.4: one chart period from the tables in RAM (charts.cpp), in the JSON
+// format of /api/history. `pts` holds WEB_CHART_POINTS points.
+bool print_chart(ChunkWriter &out, uint32_t hours, bool synced, charts::Point *pts)
+{
+    uint32_t bucket_s = 0;
+    const size_t n = charts::snapshot(hours, synced ? time(nullptr) : 0, pts, bucket_s);
+    out.print("{\"hours\":%lu,\"points\":%lu,\"bucket_s\":%lu,\"log_period_s\":%lu,\"measure_period_s\":%lu,"
+              "\"source\":\"measurements\",\"records\":[",
+              static_cast<unsigned long>(hours), static_cast<unsigned long>(config::WEB_CHART_POINTS),
+              static_cast<unsigned long>(bucket_s), static_cast<unsigned long>(config::LOG_PERIOD_MS / 1000),
+              static_cast<unsigned long>(config::MEASURE_PERIOD_MS / 1000));
+    for (size_t i = 0; i < n; i++) {
+        out.print("%s[%lld,%.2f,%.2f,%.1f]", i ? "," : "", static_cast<long long>(pts[i].time),
+                  pts[i].temperature_c, pts[i].humidity_rh, pts[i].pressure_hpa);
+    }
+    return out.print("],\"available\":true}");
+}
+
+// FR-8.4: all chart periods of the page in one answer, so a new page needs
+// one request (and one TCP connection) for its charts instead of three.
+esp_err_t handle_charts(httpd_req_t *req)
+{
+    std::unique_ptr<charts::Point[]> pts(new (std::nothrow) charts::Point[config::WEB_CHART_POINTS]);
+    if (!pts) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+    }
+    struct tm now_tm;
+    const bool synced = net_time::local_time(now_tm);
+    ChunkWriter out(req, "application/json", NO_STORE);
+    out.print("{\"periods\":[");
+    bool first = true;
+    for (const uint32_t hours : config::WEB_CHART_PERIODS_H) {
+        if (!first) {
+            out.print(",");
+        }
+        first = false;
+        print_chart(out, hours, synced, pts.get());
+    }
+    out.print("]}");
+    return out.finish();
 }
 
 // FR-8.4: the last `hours` hours as JSON, averaged into at most `points`
@@ -221,8 +342,6 @@ esp_err_t handle_history(httpd_req_t *req)
             points = std::clamp<uint32_t>(strtoul(value, nullptr, 10), 10, config::WEB_HISTORY_MAX_POINTS);
         }
     }
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     struct tm now_tm;
     const bool synced = net_time::local_time(now_tm);
 
@@ -233,19 +352,8 @@ esp_err_t handle_history(httpd_req_t *req)
         if (!pts) {
             return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
         }
-        uint32_t bucket_s = 0;
-        const size_t n = charts::snapshot(hours, synced ? time(nullptr) : 0, pts.get(), bucket_s);
-        ChunkWriter out(req);
-        out.print("{\"hours\":%lu,\"points\":%lu,\"bucket_s\":%lu,\"log_period_s\":%lu,\"measure_period_s\":%lu,"
-                  "\"source\":\"measurements\",\"records\":[",
-                  static_cast<unsigned long>(hours), static_cast<unsigned long>(points),
-                  static_cast<unsigned long>(bucket_s), static_cast<unsigned long>(config::LOG_PERIOD_MS / 1000),
-                  static_cast<unsigned long>(config::MEASURE_PERIOD_MS / 1000));
-        for (size_t i = 0; i < n; i++) {
-            out.print("%s[%lld,%.2f,%.2f,%.1f]", i ? "," : "", static_cast<long long>(pts[i].time),
-                      pts[i].temperature_c, pts[i].humidity_rh, pts[i].pressure_hpa);
-        }
-        out.print("],\"available\":true}");
+        ChunkWriter out(req, "application/json", NO_STORE);
+        print_chart(out, hours, synced, pts.get());
         return out.finish();
     }
 
@@ -262,7 +370,7 @@ esp_err_t handle_history(httpd_req_t *req)
     // Records without a time cannot be placed on the chart.
     time_t base = synced ? time(nullptr) - static_cast<time_t>(window_s) : 0;
 
-    ChunkWriter out(req);
+    ChunkWriter out(req, "application/json", NO_STORE);
     out.print("{\"hours\":%lu,\"points\":%lu,\"bucket_s\":%lu,\"log_period_s\":%lu,\"measure_period_s\":%lu,"
               "\"source\":\"history\",\"records\":[",
               static_cast<unsigned long>(hours), static_cast<unsigned long>(points),
@@ -323,7 +431,8 @@ esp_err_t handle_history(httpd_req_t *req)
 // device; FR-8.8: gzip-compressed for browsers that accept it.
 esp_err_t handle_csv(httpd_req_t *req)
 {
-    ChunkWriter out(req, config::WEB_CSV_CHUNK_BYTES);
+    char headers[160] = "";  // filled before the first write
+    ChunkWriter out(req, "text/csv", headers);
     // Without memory for the compressor the CSV goes out uncompressed.
     GzipStream gz;
     const bool gzip = accepts_gzip(req) &&
@@ -332,18 +441,12 @@ esp_err_t handle_csv(httpd_req_t *req)
                       });
     auto write = [&](const char *data, size_t len) { return gzip ? gz.write(data, len) : out.write(data, len); };
 
-    char disposition[64];
-    snprintf(disposition, sizeof(disposition), "attachment; filename=\"history-%s.csv\"", identity::device_id());
-    httpd_resp_set_type(req, "text/csv");
-    httpd_resp_set_hdr(req, "Content-Disposition", disposition);
-    httpd_resp_set_hdr(req, "Vary", "Accept-Encoding");
-    if (gzip) {
-        httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
-    }
-    // FR-8.6: ESP-IDF sends every chunk in three pieces (size line, data,
-    // CRLF). With TCP_NODELAY each piece is a segment of its own, so a long
-    // download sent three packets per chunk, two of them tiny. Nagle's
-    // algorithm merges them again; while data keep flowing it adds no delay.
+    snprintf(headers, sizeof(headers),
+             "Content-Disposition: attachment; filename=\"history-%s.csv\"\r\nVary: Accept-Encoding\r\n%s",
+             identity::device_id(), gzip ? "Content-Encoding: gzip\r\n" : "");
+    // FR-8.6: each chunk is one write, but its last segment is rarely full.
+    // Nagle's algorithm merges it with the next chunk; while data keep
+    // flowing it adds no delay.
     const int off = 0;
     setsockopt(httpd_req_to_sockfd(req), IPPROTO_TCP, TCP_NODELAY, &off, sizeof(off));
     write(history::CSV_HEADER, strlen(history::CSV_HEADER));
@@ -371,7 +474,19 @@ esp_err_t handle_and_close(httpd_req_t *req)
 {
     httpd_resp_set_hdr(req, "Connection", "close");
     s_requests++;
+    s_answer_bytes = 0;
     const esp_err_t err = reinterpret_cast<Handler>(req->user_ctx)(req);
+
+    // FR-8.6: a slow answer is logged with the time since the connection
+    // was opened (set by open_no_delay), so a slow link can be measured.
+    // The time ends when the last byte is handed to TCP; a lost request or
+    // handshake segment shows up, a slow delivery only for answers larger
+    // than the TCP send buffer.
+    const uint32_t ms = now_ms() - static_cast<uint32_t>(reinterpret_cast<uintptr_t>(req->sess_ctx));
+    if (ms >= config::WEB_SLOW_ANSWER_MS) {
+        ESP_LOGW(TAG, "Slow answer: %s, %u bytes in %.1f s%s", req->uri, static_cast<unsigned>(s_answer_bytes.load()),
+                 ms / 1000.0, err == ESP_OK ? "" : " (failed)");
+    }
     // On failure the server already closes the session itself.
     if (err == ESP_OK) {
         httpd_sess_trigger_close(req->handle, httpd_req_to_sockfd(req));
@@ -392,8 +507,11 @@ esp_err_t handle_and_close(httpd_req_t *req)
 // pieces. With Nagle's algorithm on, every piece after the first waits for
 // the browser's ACK, which browsers delay by up to 200 ms: about 0.2 to 0.3 s
 // per request, over a second for a new page. Small answers do not need it.
-esp_err_t open_no_delay(httpd_handle_t, int sockfd)
+esp_err_t open_no_delay(httpd_handle_t hd, int sockfd)
 {
+    // The opening time travels with the session as its context (no memory
+    // to free: the value is stored in the pointer itself).
+    httpd_sess_set_ctx(hd, sockfd, reinterpret_cast<void *>(static_cast<uintptr_t>(now_ms())), [](void *) {});
     const int on = 1;
     if (setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, &on, sizeof(on)) != 0) {
         ESP_LOGW(TAG, "TCP_NODELAY not set: errno %d", errno);  // slower, still works
@@ -427,6 +545,7 @@ esp_err_t start_server()
         {"/api/current", handle_current},
         {"/api/info", handle_info},
         {"/api/history", handle_history},
+        {"/api/charts", handle_charts},
         {"/history.csv", handle_csv},
         {"/favicon.ico", handle_favicon},
         {"/apple-touch-icon.png", handle_favicon},

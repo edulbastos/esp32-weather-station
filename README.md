@@ -126,6 +126,7 @@ The page shows the current values (refreshed at every measurement) and charts fr
 | `/` | the page |
 | `/api/current` | current values, identifiers, Wi-Fi signal (`rssi_dbm`), firmware version and heap as JSON |
 | `/api/info` | device, firmware, intervals and sensors as JSON (same as the MQTT info message) |
+| `/api/charts` | the three chart periods of the page (1 h, 24 h, 7 d) in one answer, as JSON |
 | `/api/history?hours=24&points=150` | history of the last N hours as JSON, averaged into P points (defaults 24 and 150) |
 | `/history.csv` | the whole history as CSV, named `history-<device_id>.csv` (see below) |
 
@@ -166,7 +167,7 @@ To save the CSV on the PC, press `Ctrl+T` then `Ctrl+L` in the monitor before `l
 
 ## Troubleshooting
 
-**Wi-Fi signal first.** The web page needs a signal of about −60 dBm or better (`sys` shows it, and the `health:` log line every 10 minutes). Around −65 to −75 dBm the link loses packets: the page and its charts can take seconds or stall. Move the station (or a mesh node) closer and keep the end of the ESP32 module, where the antenna is, free of cables and metal. Close the web page while downloading the full CSV: the server answers one request at a time, and the page's requests wait (and fail with `error in send : 104` in the log) until the download ends. Every Wi-Fi connection is logged with the access point, channel, channel width, security and signal, for example `Associated with "IoT" (ca:06:c3:51:a8:42), channel 6 HT20, WPA2, -57 dBm`, and every disconnection with the access point and the meaning of the reason, for example `Wi-Fi disconnected from "IoT" (ca:06:c3:51:a8:42, -61 dBm): reason 2, access point did not answer authentication`.
+**Wi-Fi signal first.** The web page needs a signal of about −60 dBm or better (`sys` shows it, and the `health:` log line every 10 minutes). Around −65 to −75 dBm the link loses packets: the page and its charts can take seconds or stall. Move the station (or a mesh node) closer and keep the end of the ESP32 module, where the antenna is, free of cables and metal. An answer that takes a second or more is logged, for example `W (...) web: Slow answer: /api/charts, 16384 bytes in 3.2 s`; many of them mean a lossy link. `ping` from a computer to the station shows it too: more than a few percent packet loss is too much. Close the web page while downloading the full CSV: the server answers one request at a time, and the page's requests wait (and fail with `error in send : 104` in the log) until the download ends. Every Wi-Fi connection is logged with the access point, channel, channel width, security and signal, for example `Associated with "IoT" (ca:06:c3:51:a8:42), channel 6 HT20, WPA2, -57 dBm`, and every disconnection with the access point and the meaning of the reason, for example `Wi-Fi disconnected from "IoT" (ca:06:c3:51:a8:42, -61 dBm): reason 2, access point did not answer authentication`.
 
 In the serial monitor, `sys` shows the uptime, why the station last started, the free memory, the device and sensor identifiers and the firmware version, the Wi-Fi link (signal, IP, gateway), the network watchdog (last sign of traffic and where it came from), the MQTT state and how many web requests were served. Every 10 minutes the same figures appear in the log as a `health:` line.
 

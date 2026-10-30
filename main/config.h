@@ -123,10 +123,10 @@ constexpr const char *CONSOLE_PROMPT      = "weather> ";
 constexpr uint16_t    WEB_SERVER_PORT        = 80;
 // Simultaneous connections; lwIP has 10 sockets, shared with MQTT and SNTP
 constexpr uint16_t    WEB_MAX_CLIENTS        = 4;
-constexpr uint16_t    WEB_MAX_ROUTES         = 10;    // registered URIs (8 in use)
+constexpr uint16_t    WEB_MAX_ROUTES         = 10;    // registered URIs (9 in use)
 constexpr uint16_t    WEB_SEND_TIMEOUT_S     = 15;    // give up sending after this
-constexpr size_t      WEB_CHUNK_BYTES        = 1024;  // chunk size of the JSON answers
-constexpr size_t      WEB_CSV_CHUNK_BYTES    = 4096;  // chunk size of /history.csv
+constexpr size_t      WEB_CHUNK_BYTES        = 4096;  // answer bytes per write (FR-8.6)
+constexpr uint32_t    WEB_SLOW_ANSWER_MS     = 1000;  // log answers slower than this (FR-8.6)
 // The TCP send buffer (CONFIG_LWIP_TCP_SND_BUF_DEFAULT, 11520 bytes = 8 MSS
 // in sdkconfig.defaults) bounds how much can be in flight per connection.
 constexpr uint32_t    WEB_HISTORY_HOURS      = 24;    // default window of /api/history

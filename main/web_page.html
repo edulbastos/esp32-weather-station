@@ -124,7 +124,6 @@ try {
 // loaded when the page opens, so switching between them needs no request.
 const PERIODS = [1, 24, 168];
 const data = {};
-const historyGen = {}, retryTimers = {};
 let resyncTimer = null, loadAllGen = 0;
 let currentTimer = null;
 // Each call increments its counter; an answer that arrives after a newer
@@ -199,55 +198,51 @@ async function loadCurrent() {
   currentTimer = setTimeout(loadCurrent, delay);
 }
 
-// FR-8.4: chart data of one period, about 150 points averaged by the
-// station. On a weak Wi-Fi link an answer can take very long; give up after
-// HISTORY_TIMEOUT_MS and try that period again after HISTORY_RETRY_MS.
-async function loadHistory(h) {
-  clearTimeout(retryTimers[h]);
-  const gen = historyGen[h] = (historyGen[h] || 0) + 1;
-  const abort = new AbortController();
-  const timer = setTimeout(() => abort.abort(), HISTORY_TIMEOUT_MS);
-  try {
-    const r = await fetch("/api/history?hours=" + h, { cache: "no-store", signal: abort.signal });
-    if (!r.ok) throw new Error(r.status);
-    const d = await r.json();
-    if (gen !== historyGen[h]) return;  // a newer load of this period started
-    const step = d.source === "measurements" ? d.measure_period_s : d.log_period_s;
-    data[h] = {
-      loadedAt: Date.now(),
-      logPeriod: d.log_period_s,
-      bucket: d.bucket_s,
-      gap: 3 * Math.max(d.bucket_s, step),  // longer pauses break the line
-      points: d.records.map((x) => ({ t: x[0], v: [x[1], x[2], x[3]], n: 0 })),
-      lastAdded: d.records.length ? d.records[d.records.length - 1][0] : 0,
-      info: !d.available ? "history not available"
-        : d.bucket_s > step ? "each point is the average of " + fmtDuration(d.bucket_s)
-        : "one point per measurement",
-    };
-    if (h === hours) drawCharts();
-  } catch (e) {
-    if (gen !== historyGen[h]) return;
-    if (h === hours && !data[h]) {
-      $("history-info").textContent = e.name === "AbortError"
-        ? "station slow to answer, retrying…" : "history could not be loaded, retrying…";
-    }
-    retryTimers[h] = setTimeout(() => loadHistory(h), HISTORY_RETRY_MS);
-  } finally {
-    clearTimeout(timer);
-  }
+// FR-8.4: chart data of one period, about 150 points averaged by the station.
+function setChartData(d) {
+  const step = d.source === "measurements" ? d.measure_period_s : d.log_period_s;
+  data[d.hours] = {
+    loadedAt: Date.now(),
+    logPeriod: d.log_period_s,
+    bucket: d.bucket_s,
+    gap: 3 * Math.max(d.bucket_s, step),  // longer pauses break the line
+    points: d.records.map((x) => ({ t: x[0], v: [x[1], x[2], x[3]], n: 0 })),
+    lastAdded: d.records.length ? d.records[d.records.length - 1][0] : 0,
+    info: !d.available ? "history not available"
+      : d.bucket_s > step ? "each point is the average of " + fmtDuration(d.bucket_s)
+      : "one point per measurement",
+  };
 }
 
-// Loads every period, the selected one first; the station answers one
-// request at a time. Runs when the page opens, when it becomes visible
-// again, after missed measurements, and every RESYNC_MS.
+// Loads every period in one request (/api/charts): on a lossy link each TCP
+// connection risks waiting for a retransmission, so one answer is faster
+// than three. Runs when the page opens, when it becomes visible again, after
+// missed measurements, and every RESYNC_MS. On a weak Wi-Fi link an answer
+// can take very long; give up after HISTORY_TIMEOUT_MS and try again after
+// HISTORY_RETRY_MS.
 async function loadAll() {
   clearTimeout(resyncTimer);
   const gen = ++loadAllGen;
-  for (const h of [hours, ...PERIODS.filter((p) => p !== hours)]) {
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), HISTORY_TIMEOUT_MS);
+  try {
+    const r = await fetch("/api/charts", { cache: "no-store", signal: abort.signal });
+    if (!r.ok) throw new Error(r.status);
+    const d = await r.json();
     if (gen !== loadAllGen) return;  // a newer loadAll took over
-    await loadHistory(h);
+    d.periods.forEach(setChartData);
+    if (data[hours]) drawCharts();
+    resyncTimer = setTimeout(loadAll, RESYNC_MS);
+  } catch (e) {
+    if (gen !== loadAllGen) return;
+    if (!data[hours]) {
+      $("history-info").textContent = e.name === "AbortError"
+        ? "station slow to answer, retrying…" : "history could not be loaded, retrying…";
+    }
+    resyncTimer = setTimeout(loadAll, HISTORY_RETRY_MS);
+  } finally {
+    clearTimeout(timer);
   }
-  if (gen === loadAllGen) resyncTimer = setTimeout(loadAll, RESYNC_MS);
 }
 
 // Adds a measurement to every period without asking the station again. It
