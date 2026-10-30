@@ -22,7 +22,7 @@ The project is built with ESP-IDF (v6.1) and uses FreeRTOS to run sensor measure
 *   `main/bme280.h`, `main/bme280.cpp`: BME280 driver with the Bosch datasheet compensation formulas.
 *   `main/ssd1306.h`, `main/ssd1306.cpp`: SSD1306 driver with a local frame buffer.
 *   `main/font5x7.h`: 5x7 font (ASCII plus a degree sign at `0x7F`).
-*   `main/net_time.h`, `main/net_time.cpp`: Wi-Fi station (all-channel scan, strongest access point, connection details logged) with automatic reconnection, signal level for the header icon, and NTP time sync (time of day).
+*   `main/net_time.h`, `main/net_time.cpp`: Wi-Fi station (all-channel scan, strongest access point, connection details logged) with automatic reconnection, signal level for the header icon, RSSI for MQTT and the web page (FR-5.8), and NTP time sync (time of day).
 *   `main/identity.h`, `main/identity.cpp`: Device identifier (`ws-` + MAC), station name (`CONFIG_WS_DEVICE_NAME`), sensor identifier (type + CRC-32 of the BME280 trimming parameters), the last sensor per position in NVS to detect a replacement (FR-10.7), and the info message JSON. `identity::init()` runs first in `app_main` and also initializes NVS.
 *   `main/telemetry.h`, `main/telemetry.cpp`: MQTT client and the JSON payload, on the topics `weather-station/<device_id>/data`, `.../info` (retained, sent on every connection and after a sensor replacement) and `.../status` (retained `online` on connection, `offline` as last will); clears the retained message of the pre-v2.0.0 topic `weather-station/data` on every connection. Auto-reconnect of the client is off: the module reconnects at once when Wi-Fi gets an IP, retries every `MQTT_RECONNECT_MS` while it has one, and does not try while Wi-Fi is down.
 *   `main/history.h`, `main/history.cpp`: Measurement history as a ring buffer of 16-byte records with CRC16 on the `history` partition (format 2, FR-10.6: 24-bit sequence numbers compared modulo 2^24, each sector starts with a header record holding the MAC and one definition record per sensor; measurement records carry the sensor index), and the `log` console command (`info`, `dump [N]`, `clear`). Sectors of the pre-v2.0.0 format are ignored and erased when the ring reaches them.
@@ -69,9 +69,9 @@ The Arduino libraries (`Wire.h`, `Adafruit_GFX.h`, `Adafruit_SSD1306.h`, `Adafru
 
 The code is divided into five tasks:
 
-*   **`taskMeasure`:** Measures the weather data from the BME280 sensor at the measurement interval (`CONFIG_WS_MEASURE_PERIOD_S`, default 2 seconds).
+*   **`taskMeasure`:** Measures the weather data from the BME280 sensor at the measurement interval (`CONFIG_WS_MEASURE_PERIOD_S`, default 2 seconds). It also samples the Wi-Fi RSSI and keeps the lowest value since the last MQTT message in `SharedData::rssi_min` (FR-5.8).
 *   **`taskDisplay`:** Updates the OLED display with the current weather data every 1 second. `taskMeasure` also wakes it with a task notification on each new measurement, so the measurement icon appears immediately and is cleared after `MEASURE_ICON_MS`. It also owns the display power (FR-9.x): the BOOT button ISR and the `display` console command post a request in `s_display_request` and notify it; it switches the panel off after `CONFIG_WS_DISPLAY_TIMEOUT_MIN` without interaction, and while off it draws nothing and sleeps until notified.
-*   **`taskPublish`:** Sends the latest valid measurement to the MQTT broker at the publish interval (`CONFIG_WS_MQTT_PUBLISH_PERIOD_S`, default 60 seconds). Created only when Wi-Fi and a broker URI are configured.
+*   **`taskPublish`:** Sends the latest valid measurement, with the lowest RSSI of the interval, to the MQTT broker at the publish interval (`CONFIG_WS_MQTT_PUBLISH_PERIOD_S`, default 60 seconds). Created only when Wi-Fi and a broker URI are configured.
 *   **`taskLog`:** Stores the latest valid measurement in the flash history at the log interval (`CONFIG_WS_LOG_PERIOD_S`, default 60 seconds).
 *   **`taskHealth`:** Network watchdog and health log (NFR-2.3, NFR-2.4), see `main/health.cpp`.
 

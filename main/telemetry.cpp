@@ -11,6 +11,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/timers.h"
 #include "identity.h"
+#include "net_time.h"
 #include "mqtt_client.h"
 
 static const char *TAG = "telemetry";
@@ -178,26 +179,31 @@ bool connected() { return s_connected; }
 
 const char *client_id() { return identity::device_id(); }
 
-esp_err_t publish(const Bme280Data &data, time_t sample_time)
+esp_err_t publish(const Bme280Data &data, time_t sample_time, int rssi_dbm)
 {
     if (!s_connected) {
         return ESP_ERR_INVALID_STATE;
     }
 
     // FR-6.3, FR-10.4: JSON payload with the device and sensor identifiers;
-    // the time is left out until the clock is synchronized.
+    // the time is left out until the clock is synchronized, the RSSI
+    // (FR-5.8) when there is no sample.
     char time_field[32] = "";
     if (sample_time != 0) {
         snprintf(time_field, sizeof(time_field), "\"time\":%" PRId64 ",", static_cast<int64_t>(sample_time));
+    }
+    char rssi_field[24] = "";
+    if (rssi_dbm != net_time::NO_RSSI) {
+        snprintf(rssi_field, sizeof(rssi_field), ",\"rssi_dbm\":%d", rssi_dbm);
     }
     char sensor_id[24];
     identity::sensor_id(0, sensor_id, sizeof(sensor_id));
     char payload[256];
     const int len = snprintf(payload, sizeof(payload),
                              "{\"device_id\":\"%s\",\"sensor_id\":\"%s\",%s\"temperature_c\":%.2f,"
-                             "\"humidity_rh\":%.2f,\"pressure_hpa\":%.2f}",
+                             "\"humidity_rh\":%.2f,\"pressure_hpa\":%.2f%s}",
                              identity::device_id(), sensor_id, time_field, data.temperature_c, data.humidity_rh,
-                             data.pressure_hpa);
+                             data.pressure_hpa, rssi_field);
 
     const int id = esp_mqtt_client_publish(s_client, s_data_topic, payload, len,
                                            config::MQTT_QOS, config::MQTT_RETAIN);

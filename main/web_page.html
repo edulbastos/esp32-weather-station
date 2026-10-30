@@ -24,7 +24,8 @@
   header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 4px 16px; }
   h1 { font-size: 20px; margin: 0; }
   h2 { font-size: 16px; margin: 24px 0 8px; }
-  .status { color: var(--muted); font-size: 13px; }
+  .status-box { margin-left: auto; text-align: right; }
+  .status { display: block; color: var(--muted); font-size: 13px; }
   .status.error { color: var(--temp); }
   .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-top: 16px; }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
@@ -57,7 +58,10 @@
 <main>
   <header>
     <h1>Weather Station</h1>
-    <span class="status" id="status">Connecting…</span>
+    <div class="status-box">
+      <span class="status" id="status">Connecting…</span>
+      <span class="status" id="rssi"></span>
+    </div>
   </header>
 
   <section class="cards">
@@ -164,7 +168,9 @@ async function loadCurrent() {
     measurePeriod = d.measure_period_s;
     showStation(d);
     delay = Math.max(1000, d.measure_period_s * 1000);
+    // FR-5.8: the RSSI on a line of its own, below the signal bars.
     const wifi = d.wifi_level > 0 ? " · Wi-Fi " + "▂▄▆".slice(0, d.wifi_level) : "";
+    $("rssi").textContent = d.rssi_dbm != null ? d.rssi_dbm + " dBm" : "";
     if (d.valid) {
       $("temp").textContent = d.temperature_c.toFixed(1);
       $("hum").textContent = d.humidity_rh.toFixed(1);
@@ -180,6 +186,7 @@ async function loadCurrent() {
   } catch (e) {
     if (gen !== currentGen) return;
     setStatus("Station unreachable, retrying…", true);
+    $("rssi").textContent = "";
   }
   currentTimer = setTimeout(loadCurrent, delay);
 }

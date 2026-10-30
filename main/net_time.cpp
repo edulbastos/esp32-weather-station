@@ -221,6 +221,15 @@ int wifi_level()
     return ap.rssi >= config::WIFI_RSSI_FAIR_DBM ? 2 : 1;
 }
 
+int rssi_dbm()
+{
+    wifi_ap_record_t ap;
+    if (!s_started || !s_connected || esp_wifi_sta_get_ap_info(&ap) != ESP_OK) {
+        return NO_RSSI;
+    }
+    return ap.rssi;
+}
+
 bool associated() { return s_associated; }
 
 bool has_ip() { return s_connected; }

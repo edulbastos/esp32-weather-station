@@ -153,6 +153,12 @@ esp_err_t handle_current(httpd_req_t *req)
     if (cur.time != 0) {
         snprintf(time_field, sizeof(time_field), "%lld", static_cast<long long>(cur.time));
     }
+    // FR-5.8: the current RSSI, null while Wi-Fi is not connected.
+    char rssi_field[12] = "null";
+    const int rssi = net_time::rssi_dbm();
+    if (rssi != net_time::NO_RSSI) {
+        snprintf(rssi_field, sizeof(rssi_field), "%d", rssi);
+    }
     char sensor_id[24];
     identity::sensor_id(0, sensor_id, sizeof(sensor_id));
     const int n = snprintf(json, sizeof(json), "{\"device_id\":\"%s\",\"name\":\"%s\",\"sensor_id\":\"%s\",",
@@ -162,16 +168,17 @@ esp_err_t handle_current(httpd_req_t *req)
     if (cur.valid) {
         snprintf(rest, rest_len,
                  "\"valid\":true,\"time\":%s,\"age_s\":%.1f,\"temperature_c\":%.2f,"
-                 "\"humidity_rh\":%.2f,\"pressure_hpa\":%.2f,\"wifi_level\":%d,"
+                 "\"humidity_rh\":%.2f,\"pressure_hpa\":%.2f,\"wifi_level\":%d,\"rssi_dbm\":%s,"
                  "\"measure_period_s\":%lu,\"log_period_s\":%lu}",
                  time_field, cur.age_ms / 1000.0, cur.values.temperature_c, cur.values.humidity_rh,
-                 cur.values.pressure_hpa, net_time::wifi_level(),
+                 cur.values.pressure_hpa, net_time::wifi_level(), rssi_field,
                  static_cast<unsigned long>(config::MEASURE_PERIOD_MS / 1000),
                  static_cast<unsigned long>(config::LOG_PERIOD_MS / 1000));
     } else {
         snprintf(rest, rest_len,
-                 "\"valid\":false,\"wifi_level\":%d,\"measure_period_s\":%lu,\"log_period_s\":%lu}",
-                 net_time::wifi_level(), static_cast<unsigned long>(config::MEASURE_PERIOD_MS / 1000),
+                 "\"valid\":false,\"wifi_level\":%d,\"rssi_dbm\":%s,\"measure_period_s\":%lu,"
+                 "\"log_period_s\":%lu}",
+                 net_time::wifi_level(), rssi_field, static_cast<unsigned long>(config::MEASURE_PERIOD_MS / 1000),
                  static_cast<unsigned long>(config::LOG_PERIOD_MS / 1000));
     }
     httpd_resp_set_type(req, "application/json");

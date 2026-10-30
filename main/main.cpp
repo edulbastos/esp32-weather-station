@@ -16,6 +16,7 @@
 // telemetry holds the MQTT client. The serial console offers the `log` command
 // to read the history.
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cstring>
@@ -47,6 +48,7 @@ struct SharedData {
     bool valid;  // false until the first successful read or after sensor loss
     TickType_t sample_tick;  // when the last successful read arrived (FR-2.6)
     time_t sample_time;      // Unix time of that read, 0 before NTP sync (FR-6.3)
+    int rssi_min = net_time::NO_RSSI;  // lowest RSSI since the last MQTT message (FR-5.8)
 };
 
 i2c_master_bus_handle_t s_bus = nullptr;
@@ -304,7 +306,11 @@ void taskMeasure(void *)
             ESP_LOGW(TAG, "BME280 read failed (%d in a row): %s", errors, esp_err_to_name(err));
         }
 
+        // FR-5.8: the RSSI is sampled with every measurement.
+        const int rssi = net_time::rssi_dbm();
+
         if (xSemaphoreTake(s_data_mutex, mutex_timeout()) == pdTRUE) {
+            s_data.rssi_min = std::min(s_data.rssi_min, rssi);
             if (err == ESP_OK) {
                 s_data.values = sample;
                 s_data.valid = true;
@@ -507,6 +513,27 @@ bool take_new_sample(SharedData &out, bool handled_any, TickType_t last_tick, co
     return !handled_any || out.sample_tick != last_tick;
 }
 
+// FR-5.8: takes the lowest RSSI sampled since the last call and starts a new
+// interval; restore_rssi_min() gives it back when the message was not sent.
+int take_rssi_min()
+{
+    int rssi = net_time::NO_RSSI;
+    if (xSemaphoreTake(s_data_mutex, mutex_timeout()) == pdTRUE) {
+        rssi = s_data.rssi_min;
+        s_data.rssi_min = net_time::NO_RSSI;
+        xSemaphoreGive(s_data_mutex);
+    }
+    return rssi;
+}
+
+void restore_rssi_min(int rssi)
+{
+    if (xSemaphoreTake(s_data_mutex, mutex_timeout()) == pdTRUE) {
+        s_data.rssi_min = std::min(s_data.rssi_min, rssi);
+        xSemaphoreGive(s_data_mutex);
+    }
+}
+
 // FR-6.2: sends the latest valid measurement to the MQTT broker. Readings that
 // were already sent are not repeated, and failures only log a warning (FR-6.5).
 void taskPublish(void *)
@@ -523,11 +550,14 @@ void taskPublish(void *)
             continue;
         }
 
-        const esp_err_t err = telemetry::publish(snapshot.values, snapshot.sample_time);
+        // FR-5.8: the message carries the lowest RSSI since the previous one.
+        const int rssi_min = take_rssi_min();
+        const esp_err_t err = telemetry::publish(snapshot.values, snapshot.sample_time, rssi_min);
         if (err == ESP_OK) {
             last_sent_tick = snapshot.sample_tick;
             sent_any = true;
         } else {
+            restore_rssi_min(rssi_min);
             ESP_LOGW(TAG, "MQTT publish skipped: %s",
                      err == ESP_ERR_INVALID_STATE ? "not connected to the broker" : esp_err_to_name(err));
         }

@@ -3,6 +3,7 @@
 // clock in sync. Network failures are never critical for the station.
 #pragma once
 
+#include <climits>
 #include <ctime>
 #include "esp_err.h"
 
@@ -19,6 +20,11 @@ bool local_time(struct tm &out);
 // Wi-Fi status for the header icon (FR-5.7): -1 = Wi-Fi not configured or not
 // started, 0 = disconnected, 1..3 = connected with weak/fair/good signal.
 int wifi_level();
+
+// FR-5.8: RSSI of the access point in dBm, or NO_RSSI while Wi-Fi is not
+// connected (or not configured).
+constexpr int NO_RSSI = INT_MAX;
+int rssi_dbm();
 
 // Link state for the network watchdog (NFR-2.3): associated with the access
 // point, and holding an IP address.
