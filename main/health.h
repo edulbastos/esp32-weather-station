@@ -17,4 +17,11 @@ esp_err_t register_console_command();
 // Logs why the chip started (power-on, software restart, watchdog, ...).
 void log_reset_reason();
 
+// Heap of 8-bit capable memory in KB, as `sys` shows it; also served by
+// /api/current (FR-8.9).
+struct Heap {
+    unsigned free_kb, min_kb, largest_kb;  // free now, lowest since start, largest block
+};
+Heap heap_now();
+
 }  // namespace health

@@ -44,6 +44,8 @@
                         paint-order: stroke; stroke: var(--card); stroke-width: 4px; stroke-linejoin: round; }
   a { color: var(--hum); }
   footer { margin-top: 16px; font-size: 13px; color: var(--muted); }
+  .footer-row { display: flex; flex-wrap: wrap; gap: 0 16px; }
+  .system { margin-left: auto; text-align: right; }
   .chart-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center;
                 gap: 8px; margin: 24px 0 8px; }
   .chart-head h2 { margin: 0; }
@@ -88,8 +90,11 @@
   </section>
 
   <footer>
-    <a href="/history.csv" download>Download the full history (CSV)</a>
-    · <span id="history-info"></span>
+    <div class="footer-row">
+      <span><a href="/history.csv" download>Download the full history (CSV)</a>
+        · <span id="history-info"></span></span>
+      <span class="system" id="system"></span>
+    </div>
     <div id="station"></div>
   </footer>
 </main>
@@ -167,6 +172,9 @@ async function loadCurrent() {
     if (gen !== currentGen) return;
     measurePeriod = d.measure_period_s;
     showStation(d);
+    // FR-8.9: firmware and heap, for troubleshooting without the console.
+    $("system").textContent = "firmware " + d.firmware + " · heap " + d.heap_free_kb + " KB free (min " +
+      d.heap_min_kb + " KB, largest block " + d.heap_largest_kb + " KB)";
     delay = Math.max(1000, d.measure_period_s * 1000);
     // FR-5.8: the RSSI on a line of its own, below the signal bars.
     const wifi = d.wifi_level > 0 ? " · Wi-Fi " + "▂▄▆".slice(0, d.wifi_level) : "";
@@ -186,7 +194,7 @@ async function loadCurrent() {
   } catch (e) {
     if (gen !== currentGen) return;
     setStatus("Station unreachable, retrying…", true);
-    $("rssi").textContent = "";
+    $("rssi").textContent = $("system").textContent = "";
   }
   currentTimer = setTimeout(loadCurrent, delay);
 }

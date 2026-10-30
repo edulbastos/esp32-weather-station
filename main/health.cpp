@@ -21,7 +21,23 @@
 
 static const char *TAG = "health";
 
+namespace health {
+
+Heap heap_now()
+{
+    return Heap{
+        static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024),
+        static_cast<unsigned>(heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT) / 1024),
+        static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) / 1024),
+    };
+}
+
+}  // namespace health
+
 namespace {
+
+using health::Heap;
+using health::heap_now;
 
 bool s_wifi_enabled = false;
 TaskHandle_t s_task = nullptr;
@@ -33,19 +49,6 @@ std::atomic<const char *> s_last_ok_source{"none"};
 uint32_t s_last_web_requests = 0;
 std::atomic<int> s_failed_checks{0};
 std::atomic<int> s_forced_reconnects{0};
-
-struct Heap {
-    unsigned free_kb, min_kb, largest_kb;
-};
-
-Heap heap_now()
-{
-    return Heap{
-        static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024),
-        static_cast<unsigned>(heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT) / 1024),
-        static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) / 1024),
-    };
-}
 
 esp_netif_t *sta_netif()
 {

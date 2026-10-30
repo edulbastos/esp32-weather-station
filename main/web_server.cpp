@@ -16,6 +16,7 @@
 #include "lwip/sockets.h"
 #include "charts.h"
 #include "gzip_stream.h"
+#include "health.h"
 #include "history.h"
 #include "identity.h"
 #include "net_time.h"
@@ -148,7 +149,7 @@ esp_err_t handle_current(httpd_req_t *req)
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Data busy, try again");
     }
 
-    char json[640];
+    char json[896];
     char time_field[24] = "null";
     if (cur.time != 0) {
         snprintf(time_field, sizeof(time_field), "%lld", static_cast<long long>(cur.time));
@@ -161,8 +162,13 @@ esp_err_t handle_current(httpd_req_t *req)
     }
     char sensor_id[24];
     identity::sensor_id(0, sensor_id, sizeof(sensor_id));
-    const int n = snprintf(json, sizeof(json), "{\"device_id\":\"%s\",\"name\":\"%s\",\"sensor_id\":\"%s\",",
-                           identity::device_id(), identity::device_name_json(), sensor_id);
+    // FR-8.9: firmware version and heap, for troubleshooting from the page.
+    const health::Heap heap = health::heap_now();
+    const int n = snprintf(json, sizeof(json),
+                           "{\"device_id\":\"%s\",\"name\":\"%s\",\"sensor_id\":\"%s\",\"firmware\":\"%s\","
+                           "\"heap_free_kb\":%u,\"heap_min_kb\":%u,\"heap_largest_kb\":%u,",
+                           identity::device_id(), identity::device_name_json(), sensor_id,
+                           identity::firmware_version(), heap.free_kb, heap.min_kb, heap.largest_kb);
     char *rest = json + n;
     const size_t rest_len = sizeof(json) - n;
     if (cur.valid) {
