@@ -25,3 +25,9 @@ CONFIG_LWIP_TCP_SND_BUF_DEFAULT=11520
 # (a few minutes instead of over 10).
 CONFIG_LWIP_SO_LINGER=y
 CONFIG_LWIP_TCP_MAXRTX=6
+
+# Wi-Fi: no A-MPDU aggregation when sending (section 6.4). At about -68 dBm
+# the link stalled for up to 5 s and then delivered the held packets at once
+# (40 to 60 % ping loss); without aggregation the loss dropped to 0 to 10 %.
+# The station sends little data, so the lower peak throughput does not matter.
+# CONFIG_ESP_WIFI_AMPDU_TX_ENABLED is not set

@@ -10,8 +10,21 @@ static const char *TAG = "charts";
 
 namespace {
 
-constexpr size_t POINTS = config::WEB_CHART_POINTS;
+constexpr size_t MAX_POINTS = config::WEB_CHART_MAX_POINTS;
 constexpr size_t TIERS = sizeof(config::WEB_CHART_PERIODS_H) / sizeof(config::WEB_CHART_PERIODS_H[0]);
+static_assert(sizeof(config::WEB_CHART_POINTS) / sizeof(config::WEB_CHART_POINTS[0]) == TIERS,
+              "one number of points per chart period");
+
+constexpr bool points_fit()
+{
+    for (const uint32_t points : config::WEB_CHART_POINTS) {
+        if (points == 0 || points > MAX_POINTS) {
+            return false;
+        }
+    }
+    return true;
+}
+static_assert(points_fit(), "WEB_CHART_POINTS must be 1 .. WEB_CHART_MAX_POINTS");
 
 // Running averages of the measurements in one time bucket. The bucket with
 // number `index` covers [index * bucket_s, (index + 1) * bucket_s).
@@ -22,12 +35,13 @@ struct Bucket {
     float temp, hum, press;
 };
 
-// A ring of POINTS buckets: bucket `index` lives in slot index % POINTS, so
-// a new bucket replaces the one that just left the period.
+// A ring of `points` buckets: bucket `index` lives in slot index % points,
+// so a new bucket replaces the one that just left the period.
 struct Tier {
     uint32_t hours;
+    uint32_t points;
     uint32_t bucket_s;
-    Bucket buckets[POINTS];
+    Bucket buckets[MAX_POINTS];
 };
 
 Tier s_tiers[TIERS];
@@ -56,7 +70,8 @@ esp_err_t init()
 {
     for (size_t i = 0; i < TIERS; i++) {
         s_tiers[i].hours = config::WEB_CHART_PERIODS_H[i];
-        s_tiers[i].bucket_s = config::WEB_CHART_PERIODS_H[i] * 3600 / POINTS;
+        s_tiers[i].points = config::WEB_CHART_POINTS[i];
+        s_tiers[i].bucket_s = config::WEB_CHART_PERIODS_H[i] * 3600 / config::WEB_CHART_POINTS[i];
     }
     s_lock = xSemaphoreCreateMutex();
     return s_lock != nullptr ? ESP_OK : ESP_ERR_NO_MEM;
@@ -70,7 +85,7 @@ void add(time_t t, const Bme280Data &values)
     xSemaphoreTake(s_lock, portMAX_DELAY);
     for (Tier &tier : s_tiers) {
         const int32_t index = static_cast<int32_t>(t / tier.bucket_s);
-        Bucket &b = tier.buckets[index % POINTS];
+        Bucket &b = tier.buckets[index % tier.points];
         if (b.n > 0 && b.index > index) {
             continue;  // older than what the slot holds now (rebuild after live data)
         }
@@ -110,9 +125,15 @@ void rebuild_from_history()
     }
 }
 
+uint32_t points_for(uint32_t hours)
+{
+    const Tier *tier = find(hours);
+    return tier != nullptr ? tier->points : 0;
+}
+
 bool serves(uint32_t hours, uint32_t points)
 {
-    return points == POINTS && find(hours) != nullptr;
+    return points != 0 && points == points_for(hours);
 }
 
 size_t snapshot(uint32_t hours, time_t now, Point *out, uint32_t &bucket_s)
@@ -135,11 +156,11 @@ size_t snapshot(uint32_t hours, time_t now, Point *out, uint32_t &bucket_s)
         }
     }
     size_t count = 0;
-    for (int32_t index = newest - static_cast<int32_t>(POINTS) + 1; index <= newest; index++) {
+    for (int32_t index = newest - static_cast<int32_t>(tier->points) + 1; index <= newest; index++) {
         if (index < 0) {
             continue;
         }
-        const Bucket &b = tier->buckets[index % POINTS];
+        const Bucket &b = tier->buckets[index % tier->points];
         if (b.n > 0 && b.index == index) {
             out[count++] = Point{static_cast<time_t>(index) * tier->bucket_s + static_cast<time_t>(b.offset_s),
                                  b.temp, b.hum, b.press};

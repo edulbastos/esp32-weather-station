@@ -131,10 +131,13 @@ constexpr uint32_t    WEB_SLOW_ANSWER_MS     = 1000;  // log answers slower than
 // in sdkconfig.defaults) bounds how much can be in flight per connection.
 constexpr uint32_t    WEB_HISTORY_HOURS      = 24;    // default window of /api/history
 constexpr uint32_t    WEB_HISTORY_MAX_HOURS  = 8760;  // limit of /api/history?hours= (1 year)
-constexpr uint32_t    WEB_CHART_POINTS       = 150;   // points per chart, averaged
-// Chart periods kept ready in RAM (charts.cpp), with WEB_CHART_POINTS
-// buckets each: 1 h -> 24 s, 24 h -> 9.6 min, 7 d -> 67.2 min per point
+constexpr uint32_t    WEB_HISTORY_POINTS     = 150;   // default points of /api/history, other periods
+// Chart periods kept ready in RAM (charts.cpp) and their numbers of points
+// (FR-8.4): 1 h -> 1 min, 24 h -> 15 min, 7 d -> 2 h per point. Few points
+// keep /api/charts small: fewer TCP segments to lose on a weak link.
 constexpr uint32_t    WEB_CHART_PERIODS_H[]  = {1, 24, 168};
+constexpr uint32_t    WEB_CHART_POINTS[]     = {60, 96, 84};
+constexpr uint32_t    WEB_CHART_MAX_POINTS   = 96;    // largest of WEB_CHART_POINTS
 constexpr uint32_t    WEB_HISTORY_MAX_POINTS = 1440;  // limit of /api/history?points=
 
 // ---------------------------------------------------------------------------

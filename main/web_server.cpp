@@ -285,14 +285,14 @@ esp_err_t handle_info(httpd_req_t *req)
 }
 
 // FR-8.4: one chart period from the tables in RAM (charts.cpp), in the JSON
-// format of /api/history. `pts` holds WEB_CHART_POINTS points.
+// format of /api/history. `pts` holds WEB_CHART_MAX_POINTS points.
 bool print_chart(ChunkWriter &out, uint32_t hours, bool synced, charts::Point *pts)
 {
     uint32_t bucket_s = 0;
     const size_t n = charts::snapshot(hours, synced ? time(nullptr) : 0, pts, bucket_s);
     out.print("{\"hours\":%lu,\"points\":%lu,\"bucket_s\":%lu,\"log_period_s\":%lu,\"measure_period_s\":%lu,"
               "\"source\":\"measurements\",\"records\":[",
-              static_cast<unsigned long>(hours), static_cast<unsigned long>(config::WEB_CHART_POINTS),
+              static_cast<unsigned long>(hours), static_cast<unsigned long>(charts::points_for(hours)),
               static_cast<unsigned long>(bucket_s), static_cast<unsigned long>(config::LOG_PERIOD_MS / 1000),
               static_cast<unsigned long>(config::MEASURE_PERIOD_MS / 1000));
     for (size_t i = 0; i < n; i++) {
@@ -306,7 +306,7 @@ bool print_chart(ChunkWriter &out, uint32_t hours, bool synced, charts::Point *p
 // one request (and one TCP connection) for its charts instead of three.
 esp_err_t handle_charts(httpd_req_t *req)
 {
-    std::unique_ptr<charts::Point[]> pts(new (std::nothrow) charts::Point[config::WEB_CHART_POINTS]);
+    std::unique_ptr<charts::Point[]> pts(new (std::nothrow) charts::Point[config::WEB_CHART_MAX_POINTS]);
     if (!pts) {
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
     }
@@ -332,7 +332,7 @@ esp_err_t handle_charts(httpd_req_t *req)
 esp_err_t handle_history(httpd_req_t *req)
 {
     uint32_t hours = config::WEB_HISTORY_HOURS;
-    uint32_t points = config::WEB_CHART_POINTS;
+    uint32_t points = 0;  // default: that of the chart period, else WEB_HISTORY_POINTS
     char query[48], value[12];
     if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
         if (httpd_query_key_value(query, "hours", value, sizeof(value)) == ESP_OK) {
@@ -342,13 +342,17 @@ esp_err_t handle_history(httpd_req_t *req)
             points = std::clamp<uint32_t>(strtoul(value, nullptr, 10), 10, config::WEB_HISTORY_MAX_POINTS);
         }
     }
+    if (points == 0) {
+        const uint32_t chart_points = charts::points_for(hours);
+        points = chart_points != 0 ? chart_points : config::WEB_HISTORY_POINTS;
+    }
     struct tm now_tm;
     const bool synced = net_time::local_time(now_tm);
 
     // The periods of the page come ready from RAM (charts.cpp): no flash
     // access, constant time whatever the measurement or log interval.
     if (charts::serves(hours, points)) {
-        std::unique_ptr<charts::Point[]> pts(new (std::nothrow) charts::Point[config::WEB_CHART_POINTS]);
+        std::unique_ptr<charts::Point[]> pts(new (std::nothrow) charts::Point[config::WEB_CHART_MAX_POINTS]);
         if (!pts) {
             return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
         }

@@ -198,7 +198,7 @@ async function loadCurrent() {
   currentTimer = setTimeout(loadCurrent, delay);
 }
 
-// FR-8.4: chart data of one period, about 150 points averaged by the station.
+// FR-8.4: chart data of one period, 60 to 96 points averaged by the station.
 function setChartData(d) {
   const step = d.source === "measurements" ? d.measure_period_s : d.log_period_s;
   data[d.hours] = {
