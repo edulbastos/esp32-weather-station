@@ -7,6 +7,7 @@
 #include "driver/gpio.h"
 #include "driver/i2c_types.h"
 #include "esp_log.h"
+#include "esp_wifi_types.h"
 #include "freertos/FreeRTOS.h"
 #include "sdkconfig.h"
 
@@ -81,6 +82,14 @@ constexpr int8_t      WIFI_RSSI_FAIR_DBM  = -70;
 // the station then stops receiving while it can still send; off by default
 // on mains power. Turn on to save energy (e.g. on battery).
 constexpr bool        WIFI_POWER_SAVE     = false;
+// Low, stable Wi-Fi rates (section 6.4). The station sends little data, but
+// on a link that passes small packets and loses large ones (over 85 % of the
+// pings of 1400 bytes at -61 dBm) the web page stalls while MQTT works. No
+// 802.11n, and everything is sent at a fixed rate: 6 Mbps OFDM, a basic rate
+// every 802.11g access point receives. Needs A-MPDU off when sending
+// (sdkconfig.defaults).
+constexpr uint8_t     WIFI_PROTOCOLS      = WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G;
+constexpr wifi_phy_rate_t WIFI_TX_RATE    = WIFI_PHY_RATE_6M;
 // Log level of the Wi-Fi driver (tag "wifi"). Its INFO lines (Block Ack
 // sessions "ba-add"/"ba-del"/"DELBA", power save, state changes) are routine;
 // the association is logged by net_time instead.

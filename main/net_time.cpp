@@ -10,6 +10,7 @@
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_netif_sntp.h"
+#include "esp_private/wifi.h"  // esp_wifi_internal_set_fix_rate
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
@@ -80,11 +81,13 @@ void log_connection(const wifi_event_sta_connected_t *info)
 {
     wifi_ap_record_t ap = {};
     const bool have_ap = esp_wifi_sta_get_ap_info(&ap) == ESP_OK;
+    const char *width = (config::WIFI_PROTOCOLS & WIFI_PROTOCOL_11N) == 0 ? "20 MHz"
+                        : have_ap && ap.second != WIFI_SECOND_CHAN_NONE   ? "HT40"
+                                                                          : "HT20";
     ESP_LOGI(TAG, "Associated with \"%.*s\" (%02x:%02x:%02x:%02x:%02x:%02x), channel %u %s, %s, %d dBm",
              info->ssid_len, reinterpret_cast<const char *>(info->ssid), info->bssid[0], info->bssid[1],
              info->bssid[2], info->bssid[3], info->bssid[4], info->bssid[5], info->channel,
-             have_ap && ap.second != WIFI_SECOND_CHAN_NONE ? "HT40" : "HT20", auth_text(info->authmode),
-             have_ap ? ap.rssi : 0);
+             width, auth_text(info->authmode), have_ap ? ap.rssi : 0);
 }
 
 void count_drop(uint16_t reason)
@@ -207,10 +210,17 @@ esp_err_t start()
 
     if ((err = esp_wifi_set_mode(WIFI_MODE_STA)) != ESP_OK ||
         (err = esp_wifi_set_config(WIFI_IF_STA, &wifi_cfg)) != ESP_OK ||
+        (err = esp_wifi_set_protocol(WIFI_IF_STA, config::WIFI_PROTOCOLS)) != ESP_OK ||
         (err = esp_wifi_start()) != ESP_OK) {
         return err;
     }
     s_started = true;
+
+    // Section 6.4: low, stable rates. Not critical: without the fixed rate
+    // the driver chooses the rate itself.
+    if ((err = esp_wifi_internal_set_fix_rate(WIFI_IF_STA, true, config::WIFI_TX_RATE)) != ESP_OK) {
+        ESP_LOGW(TAG, "Fixed Wi-Fi rate not set: %s", esp_err_to_name(err));
+    }
 
     // NFR-2.3: power save can make the station deaf with some routers.
     if ((err = esp_wifi_set_ps(config::WIFI_POWER_SAVE ? WIFI_PS_MIN_MODEM : WIFI_PS_NONE)) != ESP_OK) {
