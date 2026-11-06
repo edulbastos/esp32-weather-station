@@ -69,6 +69,7 @@ constexpr float SEA_LEVEL_PRESSURE_HPA = 1013.25f;
 constexpr const char *WIFI_SSID           = CONFIG_WS_WIFI_SSID;
 constexpr const char *WIFI_PASSWORD       = CONFIG_WS_WIFI_PASSWORD;
 constexpr uint32_t    WIFI_RETRY_DELAY_MS = 10000;
+constexpr size_t      WIFI_DROP_REASONS   = 6;  // counters: 5 reasons apart, the last sums the others (NFR-2.4)
 constexpr const char *NTP_SERVER          = "pool.ntp.org";
 // POSIX TZ string: UTC-3, Brasilia time, no daylight saving time
 constexpr const char *TIMEZONE            = "<-03>3";

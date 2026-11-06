@@ -4,6 +4,7 @@
 #pragma once
 
 #include <climits>
+#include <cstddef>
 #include <ctime>
 #include "esp_err.h"
 
@@ -30,6 +31,12 @@ int rssi_dbm();
 // point, and holding an IP address.
 bool associated();
 bool has_ip();
+
+// NFR-2.4: writes the connections lost since start to `out`, counted per
+// disconnection reason, e.g. "3 (reason 6: 2, reason 200: 1), last 420 s ago"
+// or "0". Reconnection attempts that fail are not counted; a forced reconnect
+// is (reason 8).
+void format_drops(char *out, size_t size);
 
 // Drops the Wi-Fi association; the usual retry logic connects again.
 esp_err_t force_reconnect();

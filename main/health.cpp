@@ -50,6 +50,9 @@ uint32_t s_last_web_requests = 0;
 std::atomic<int> s_failed_checks{0};
 std::atomic<int> s_forced_reconnects{0};
 
+// Text of net_time::format_drops() with every reason in use.
+constexpr size_t DROPS_TEXT_BYTES = 40 + 24 * config::WIFI_DROP_REASONS;
+
 esp_netif_t *sta_netif()
 {
     return esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
@@ -184,10 +187,12 @@ void log_health()
             snprintf(wifi, sizeof(wifi), "down");
         }
     }
-    ESP_LOGI(TAG, "Heap free %u KB (min %u KB, largest block %u KB), Wi-Fi %s, MQTT %s, web requests %lu",
+    char drops[DROPS_TEXT_BYTES];
+    net_time::format_drops(drops, sizeof(drops));
+    ESP_LOGI(TAG, "Heap free %u KB (min %u KB, largest block %u KB), Wi-Fi %s, MQTT %s, web requests %lu, Wi-Fi drops %s",
              h.free_kb, h.min_kb, h.largest_kb, wifi,
              !telemetry::enabled() ? "off" : telemetry::connected() ? "connected" : "disconnected",
-             static_cast<unsigned long>(web_server::requests_served()));
+             static_cast<unsigned long>(web_server::requests_served()), drops);
 }
 
 void taskHealth(void *)
@@ -252,6 +257,10 @@ int cmd_sys(int, char **)
         esp_wifi_get_ps(&ps);
         printf(", power save %s", ps == WIFI_PS_NONE ? "off" : "on");
         printf("\nIP " IPSTR ", gateway " IPSTR "\n", IP2STR(&info.ip), IP2STR(&info.gw));
+
+        char drops[DROPS_TEXT_BYTES];
+        net_time::format_drops(drops, sizeof(drops));
+        printf("Wi-Fi drops since start: %s\n", drops);
 
         const int64_t last = s_last_ok_us;
         printf("Network watchdog: %s", s_gateway_seen ? "armed" : "not armed (gateway has not answered ping yet)");

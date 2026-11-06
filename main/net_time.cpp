@@ -1,6 +1,7 @@
 #include "net_time.h"
 
 #include <atomic>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <sys/time.h>
@@ -9,6 +10,7 @@
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_netif_sntp.h"
+#include "esp_timer.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/timers.h"
@@ -23,6 +25,17 @@ std::atomic<bool> s_started{false};
 std::atomic<bool> s_connected{false};   // has an IP address
 std::atomic<bool> s_associated{false};  // associated with the access point
 TimerHandle_t s_retry_timer = nullptr;
+
+// NFR-2.4: connections lost since start, per disconnection reason. Written
+// only by the event task. A slot's reason is set before its count, so a reader
+// that sees a count also sees the reason. The last slot has reason 0 (not a
+// Wi-Fi reason) and sums whatever does not fit.
+struct DropSlot {
+    std::atomic<uint16_t> reason{0};
+    std::atomic<uint32_t> count{0};
+};
+DropSlot s_drops[config::WIFI_DROP_REASONS];
+std::atomic<int64_t> s_last_drop_us{0};  // esp_timer time
 
 const char *auth_text(wifi_auth_mode_t mode)
 {
@@ -74,6 +87,20 @@ void log_connection(const wifi_event_sta_connected_t *info)
              have_ap ? ap.rssi : 0);
 }
 
+void count_drop(uint16_t reason)
+{
+    const size_t last = config::WIFI_DROP_REASONS - 1;
+    size_t i = 0;
+    while (i < last && s_drops[i].count != 0 && s_drops[i].reason != reason) {
+        i++;
+    }
+    if (i < last) {
+        s_drops[i].reason = reason;
+    }
+    s_drops[i].count++;
+    s_last_drop_us = esp_timer_get_time();
+}
+
 void retry_connect(TimerHandle_t)
 {
     esp_wifi_connect();
@@ -89,10 +116,15 @@ void on_event(void *, esp_event_base_t base, int32_t id, void *data)
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         // FR-5.5: keep trying, but not in a tight loop.
         s_connected = false;
-        s_associated = false;
+        const bool was_associated = s_associated.exchange(false);
         // NFR-2.3: which access point and why, since the Wi-Fi driver's own
         // messages are not logged (WIFI_DRIVER_LOG_LEVEL).
         const auto *info = static_cast<wifi_event_sta_disconnected_t *>(data);
+        // Each failed reconnection attempt raises this event too; only a lost
+        // connection counts as a drop.
+        if (was_associated) {
+            count_drop(info->reason);
+        }
         ESP_LOGW(TAG, "Wi-Fi disconnected from \"%.*s\" (%02x:%02x:%02x:%02x:%02x:%02x, %d dBm): reason %d, %s; "
                  "retrying in %lu ms",
                  info->ssid_len, reinterpret_cast<const char *>(info->ssid), info->bssid[0], info->bssid[1],
@@ -228,6 +260,35 @@ int rssi_dbm()
         return NO_RSSI;
     }
     return ap.rssi;
+}
+
+void format_drops(char *out, size_t size)
+{
+    uint32_t total = 0;
+    for (const DropSlot &slot : s_drops) {
+        total += slot.count;
+    }
+    int len = snprintf(out, size, "%lu", static_cast<unsigned long>(total));
+    if (total == 0) {
+        return;
+    }
+
+    const char *separator = " (";
+    for (const DropSlot &slot : s_drops) {
+        const uint32_t count = slot.count;
+        if (count != 0 && len < static_cast<int>(size)) {
+            const uint16_t reason = slot.reason;
+            len += reason != 0
+                ? snprintf(out + len, size - len, "%sreason %u: %lu", separator, reason,
+                           static_cast<unsigned long>(count))
+                : snprintf(out + len, size - len, "%sother: %lu", separator, static_cast<unsigned long>(count));
+            separator = ", ";
+        }
+    }
+    if (len < static_cast<int>(size)) {
+        const int64_t age_s = (esp_timer_get_time() - s_last_drop_us) / 1000000;
+        snprintf(out + len, size - len, "), last %lld s ago", age_s);
+    }
 }
 
 bool associated() { return s_associated; }
