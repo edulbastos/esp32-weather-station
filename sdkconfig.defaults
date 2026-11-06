@@ -26,6 +26,13 @@ CONFIG_LWIP_TCP_SND_BUF_DEFAULT=11520
 CONFIG_LWIP_SO_LINGER=y
 CONFIG_LWIP_TCP_MAXRTX=6
 
+# Network: DNS server that needs no DHCP (section 6.4). After a reconnection
+# the DNS servers are those of the DHCP answer; one without any, as a router
+# with its internet down may send, left the station unable to resolve the
+# broker until the next DHCP renewal, with Wi-Fi and the gateway working.
+CONFIG_LWIP_FALLBACK_DNS_SERVER_SUPPORT=y
+CONFIG_LWIP_FALLBACK_DNS_SERVER_ADDRESS="8.8.8.8"
+
 # Wi-Fi: no A-MPDU aggregation when sending (section 6.4). At about -68 dBm
 # the link stalled for up to 5 s and then delivered the held packets at once
 # (40 to 60 % ping loss); without aggregation the loss dropped to 0 to 10 %.

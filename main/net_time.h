@@ -41,4 +41,9 @@ void format_drops(char *out, size_t size);
 // Drops the Wi-Fi association; the usual retry logic connects again.
 esp_err_t force_reconnect();
 
+// Section 6.4: the DNS servers in use, as "main, backup <ip>, fallback <ip>",
+// with "none" for an empty position. The first two come from DHCP.
+constexpr size_t DNS_TEXT_BYTES = 72;
+void format_dns(char *out, size_t size);
+
 }  // namespace net_time

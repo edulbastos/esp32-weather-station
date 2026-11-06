@@ -258,6 +258,10 @@ int cmd_sys(int, char **)
         printf(", power save %s", ps == WIFI_PS_NONE ? "off" : "on");
         printf("\nIP " IPSTR ", gateway " IPSTR "\n", IP2STR(&info.ip), IP2STR(&info.gw));
 
+        char dns[net_time::DNS_TEXT_BYTES];
+        net_time::format_dns(dns, sizeof(dns));
+        printf("DNS: %s\n", dns);
+
         char drops[DROPS_TEXT_BYTES];
         net_time::format_drops(drops, sizeof(drops));
         printf("Wi-Fi drops since start: %s\n", drops);

@@ -136,7 +136,9 @@ void on_event(void *, esp_event_base_t base, int32_t id, void *data)
         xTimerStart(s_retry_timer, 0);
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         const auto *info = static_cast<ip_event_got_ip_t *>(data);
-        ESP_LOGI(TAG, "Wi-Fi connected, IP " IPSTR, IP2STR(&info->ip_info.ip));
+        char dns[net_time::DNS_TEXT_BYTES];
+        net_time::format_dns(dns, sizeof(dns));
+        ESP_LOGI(TAG, "Wi-Fi connected, IP " IPSTR ", DNS %s", IP2STR(&info->ip_info.ip), dns);
         s_connected = true;
     }
 }
@@ -304,6 +306,22 @@ void format_drops(char *out, size_t size)
 bool associated() { return s_associated; }
 
 bool has_ip() { return s_connected; }
+
+void format_dns(char *out, size_t size)
+{
+    esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    const esp_netif_dns_type_t types[] = {ESP_NETIF_DNS_MAIN, ESP_NETIF_DNS_BACKUP, ESP_NETIF_DNS_FALLBACK};
+    char text[3][16];
+    for (size_t i = 0; i < 3; i++) {
+        esp_netif_dns_info_t dns = {};
+        strlcpy(text[i], "none", sizeof(text[i]));
+        if (netif != nullptr && esp_netif_get_dns_info(netif, types[i], &dns) == ESP_OK &&
+            dns.ip.type == ESP_IPADDR_TYPE_V4 && dns.ip.u_addr.ip4.addr != 0) {
+            esp_ip4addr_ntoa(&dns.ip.u_addr.ip4, text[i], sizeof(text[i]));
+        }
+    }
+    snprintf(out, size, "%s, backup %s, fallback %s", text[0], text[1], text[2]);
+}
 
 esp_err_t force_reconnect()
 {
