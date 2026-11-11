@@ -13,6 +13,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "identity.h"
+#include "quality.h"
 
 static const char *TAG = "history";
 
@@ -29,8 +30,12 @@ namespace {
 // Each sector starts with a header (KIND_HEADER: format version and MAC
 // address), whose sequence number is that of the sector's first measurement,
 // followed by one definition (KIND_SENSOR) per sensor. A sensor that changes
-// gets a new definition before its next measurement. A torn write (power
-// loss) fails the CRC and is skipped.
+// gets a new definition before its next measurement. While a sensor is
+// calibrated (FR-11.1), a calibration record (KIND_CALIBRATION: sensor index
+// and the three offsets in the channel resolution) follows its definition,
+// and a new one is written before the next measurement when the offsets
+// change. Readers since v2.0.0 skip control kinds they do not know, so the
+// format stays 2. A torn write (power loss) fails the CRC and is skipped.
 struct Record {
     uint32_t head;
     uint8_t body[10];
@@ -43,6 +48,7 @@ constexpr uint8_t TYPE_CONTROL = 0xFE;
 constexpr uint8_t TYPE_ERASED = 0xFF;
 constexpr uint8_t KIND_HEADER = 1;
 constexpr uint8_t KIND_SENSOR = 2;
+constexpr uint8_t KIND_CALIBRATION = 3;  // FR-11.1, since v2.4.0
 constexpr uint8_t FORMAT_VERSION = 2;
 // Sensor definitions a reader keeps per sector; higher indexes read as an
 // unknown sensor.
@@ -50,7 +56,8 @@ constexpr size_t MAX_SENSORS = 8;
 
 constexpr size_t SECTOR_SIZE = 4096;  // flash erase unit
 constexpr size_t RECORDS_PER_SECTOR = SECTOR_SIZE / sizeof(Record);
-// Measurements in a full sector: all slots but the header and the definitions.
+// Measurements in a full sector: all slots but the header and the definitions
+// (and the calibration records of calibrated sensors, see capacity()).
 constexpr size_t MEASUREMENTS_PER_SECTOR = RECORDS_PER_SECTOR - 1 - identity::SENSOR_COUNT;
 
 const esp_partition_t *s_part = nullptr;
@@ -63,6 +70,8 @@ uint32_t s_oldest_seq = 1;  // of the oldest stored measurement
 // Sensor definitions written in the head sector (FR-10.7).
 identity::Sensor s_head_defs[identity::SENSOR_COUNT] = {};
 bool s_head_defined[identity::SENSOR_COUNT] = {};
+// Calibration in force in the head sector (FR-11.1); all 0 without a record.
+quality::Offsets s_head_cal[identity::SENSOR_COUNT] = {};
 
 uint32_t seq_of(const Record &r) { return r.head & SEQ_MASK; }
 uint8_t type_of(const Record &r) { return static_cast<uint8_t>(r.head >> 24); }
@@ -178,6 +187,40 @@ esp_err_t write_definition(const identity::Sensor &s)
     return err;
 }
 
+// FR-11.1: the offsets of a calibration record.
+quality::Offsets calibration_of(const Record &r)
+{
+    quality::Offsets o = {};
+    memcpy(&o.temp_centi, &r.body[2], 2);
+    memcpy(&o.hum_centi, &r.body[4], 2);
+    memcpy(&o.press_deci, &r.body[6], 2);
+    return o;
+}
+
+esp_err_t write_calibration(uint8_t index, const quality::Offsets &o)
+{
+    Record r = make_control(KIND_CALIBRATION);
+    r.body[1] = index;
+    memcpy(&r.body[2], &o.temp_centi, 2);
+    memcpy(&r.body[4], &o.hum_centi, 2);
+    memcpy(&r.body[6], &o.press_deci, 2);
+    const esp_err_t err = write_record(r);
+    if (err == ESP_OK) {
+        s_head_cal[index] = o;
+    }
+    return err;
+}
+
+// Capacity with the calibration records of the sensors calibrated now.
+uint32_t capacity()
+{
+    size_t calibrated = 0;
+    for (size_t i = 0; i < identity::SENSOR_COUNT; i++) {
+        calibrated += quality::offsets(i).any() ? 1 : 0;
+    }
+    return s_sectors * (MEASUREMENTS_PER_SECTOR - calibrated);
+}
+
 // The oldest measurement is in the first sector with a header after the head
 // (or in the head sector itself).
 void find_oldest()
@@ -203,6 +246,9 @@ esp_err_t start_sector()
     for (bool &defined : s_head_defined) {
         defined = false;
     }
+    for (auto &cal : s_head_cal) {
+        cal = {};
+    }
     Record header = make_control(KIND_HEADER);
     header.body[1] = FORMAT_VERSION;
     memcpy(&header.body[2], identity::device_mac(), 6);
@@ -215,6 +261,10 @@ esp_err_t start_sector()
         identity::Sensor s;
         if (identity::sensor(i, s)) {
             write_definition(s);  // on failure, append() writes it again
+            const quality::Offsets cal = quality::offsets(i);
+            if (cal.any()) {
+                write_calibration(static_cast<uint8_t>(i), cal);  // likewise
+            }
         }
     }
     find_oldest();
@@ -286,6 +336,8 @@ esp_err_t scan()
                 s_head_defs[def.index] = def;
                 s_head_defined[def.index] = true;
             }
+        } else if (is_control(r, KIND_CALIBRATION) && r.body[1] < identity::SENSOR_COUNT) {
+            s_head_cal[r.body[1]] = calibration_of(r);
         }
     }
     find_oldest();
@@ -312,23 +364,27 @@ void cmd_info()
     uint32_t count, next_seq;
     identity::Sensor defs[identity::SENSOR_COUNT];
     bool defined[identity::SENSOR_COUNT];
+    quality::Offsets cals[identity::SENSOR_COUNT];
     {
         Lock lock(portMAX_DELAY);
         count = stored_count();
         next_seq = s_next_seq;
         memcpy(defs, s_head_defs, sizeof(defs));
         memcpy(defined, s_head_defined, sizeof(defined));
+        memcpy(cals, s_head_cal, sizeof(cals));
     }
-    const uint32_t capacity = s_sectors * MEASUREMENTS_PER_SECTOR;
+    const uint32_t cap = capacity();
     printf("Records: %lu of %lu (%.1f%%), partition \"%s\" %lu KB\n", static_cast<unsigned long>(count),
-           static_cast<unsigned long>(capacity), 100.0 * count / capacity, s_part->label,
+           static_cast<unsigned long>(cap), 100.0 * count / cap, s_part->label,
            static_cast<unsigned long>(s_part->size / 1024));
     printf("Format %u, device %s\n", FORMAT_VERSION, identity::device_id());
     for (size_t i = 0; i < identity::SENSOR_COUNT; i++) {
         if (defined[i]) {
             char id[24];
             identity::format_sensor_id(defs[i].type, defs[i].fingerprint, id, sizeof(id));
-            printf("Sensor %u: %s at i2c@0x%02x\n", static_cast<unsigned>(i), id, defs[i].address);
+            char cal[96];
+            quality::format_offsets(cals[i], cal, sizeof(cal));
+            printf("Sensor %u: %s at i2c@0x%02x, %s\n", static_cast<unsigned>(i), id, defs[i].address, cal);
         }
     }
     printf("Log interval: %lu s, newest record #%lu\n",
@@ -391,6 +447,9 @@ void cmd_clear()
     for (bool &defined : s_head_defined) {
         defined = false;
     }
+    for (auto &cal : s_head_cal) {
+        cal = {};
+    }
     printf("History cleared (%u sectors erased)\n", static_cast<unsigned>(erased));
 }
 
@@ -435,7 +494,7 @@ esp_err_t init()
     if (err == ESP_OK) {
         ESP_LOGI(TAG, "%lu records stored, capacity %lu, logging every %lu s",
                  static_cast<unsigned long>(stored_count()),
-                 static_cast<unsigned long>(s_sectors * MEASUREMENTS_PER_SECTOR),
+                 static_cast<unsigned long>(capacity()),
                  static_cast<unsigned long>(config::LOG_PERIOD_MS / 1000));
     }
     return err;
@@ -467,7 +526,10 @@ esp_err_t append(const Bme280Data &data, time_t sample_time, uint8_t sensor_inde
     auto defined = [&]() {
         return s_head_defined[sensor_index] && same_sensor(s_head_defs[sensor_index], sensor);
     };
-    const size_t needed = defined() ? 1 : 2;
+    // FR-11.1: so does a changed calibration (also back to 0).
+    const quality::Offsets cal = quality::offsets(sensor_index);
+    auto calibrated = [&]() { return s_head_cal[sensor_index] == cal; };
+    const size_t needed = 1 + (defined() ? 0 : 1) + (calibrated() ? 0 : 1);
     if (s_next_slot + needed > RECORDS_PER_SECTOR) {
         s_head = (s_head + 1) % s_sectors;
         s_next_slot = 0;
@@ -477,6 +539,9 @@ esp_err_t append(const Bme280Data &data, time_t sample_time, uint8_t sensor_inde
         return err;
     }
     if (!defined() && (err = write_definition(sensor)) != ESP_OK) {
+        return err;
+    }
+    if (!calibrated() && (err = write_calibration(sensor_index, cal)) != ESP_OK) {
         return err;
     }
 

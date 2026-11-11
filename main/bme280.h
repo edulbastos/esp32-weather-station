@@ -29,9 +29,6 @@ public:
     // which differ from chip to chip; valid after a successful init().
     uint32_t fingerprint() const { return fingerprint_; }
 
-    // Altitude estimate (m) from pressure and reference sea-level pressure.
-    static float altitude_m(float pressure_hpa, float sea_level_hpa);
-
 private:
     struct Calibration {
         uint16_t t1; int16_t t2, t3;

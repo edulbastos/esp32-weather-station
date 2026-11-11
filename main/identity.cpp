@@ -9,6 +9,7 @@
 #include "freertos/FreeRTOS.h"
 #include "nvs.h"
 #include "nvs_flash.h"
+#include "quality.h"
 
 static const char *TAG = "identity";
 
@@ -52,15 +53,19 @@ void json_escape(const char *in, char *out, size_t len)
 }
 
 // Channels of a BME280 (FR-10.3), with the resolution of the history (FR-10.6).
+// FR-11.1: each channel also names its calibration offset and its scale.
 struct Channel {
     const char *id;
     const char *unit;
     const char *resolution;
+    const char *offset_format;
+    float scale;  // stored offset units per unit of the channel
+    int16_t quality::Offsets::*offset;
 };
 constexpr Channel BME280_CHANNELS[] = {
-    {"temperature", "°C", "0.01"},
-    {"humidity", "%RH", "0.01"},
-    {"pressure", "hPa", "0.1"},
+    {"temperature", "°C", "0.01", "%.2f", 100.0f, &quality::Offsets::temp_centi},
+    {"humidity", "%RH", "0.01", "%.2f", 100.0f, &quality::Offsets::hum_centi},
+    {"pressure", "hPa", "0.1", "%.1f", 10.0f, &quality::Offsets::press_deci},
 };
 
 }  // namespace
@@ -202,11 +207,11 @@ int info_json(char *buf, size_t len)
 {
     int n = snprintf(buf, len,
                      "{\"device_id\":\"%s\",\"name\":\"%s\",\"firmware\":\"%s\",\"measure_period_s\":%lu,"
-                     "\"publish_period_s\":%lu,\"log_period_s\":%lu,\"sensors\":[",
+                     "\"publish_period_s\":%lu,\"log_period_s\":%lu,\"altitude_m\":%d,\"sensors\":[",
                      s_device_id, s_name_json, firmware_version(),
                      static_cast<unsigned long>(config::MEASURE_PERIOD_MS / 1000),
                      static_cast<unsigned long>(config::MQTT_PUBLISH_PERIOD_MS / 1000),
-                     static_cast<unsigned long>(config::LOG_PERIOD_MS / 1000));
+                     static_cast<unsigned long>(config::LOG_PERIOD_MS / 1000), quality::altitude_m());
     bool first = true;
     for (size_t i = 0; i < SENSOR_COUNT && n >= 0 && static_cast<size_t>(n) < len; i++) {
         Sensor s;
@@ -219,13 +224,16 @@ int info_json(char *buf, size_t len)
                       "%s{\"id\":\"%s\",\"type\":\"%s\",\"index\":%u,\"address\":\"i2c@0x%02x\",\"channels\":[",
                       first ? "" : ",", id, sensor_type_name(s.type), s.index, s.address);
         first = false;
+        const quality::Offsets offsets = quality::offsets(i);
         for (size_t c = 0; c < sizeof(BME280_CHANNELS) / sizeof(BME280_CHANNELS[0]); c++) {
             if (n < 0 || static_cast<size_t>(n) >= len) {
                 return n;
             }
             const Channel &ch = BME280_CHANNELS[c];
-            n += snprintf(buf + n, len - n, "%s{\"id\":\"%s\",\"unit\":\"%s\",\"resolution\":%s}", c ? "," : "",
-                          ch.id, ch.unit, ch.resolution);
+            char offset[16];
+            snprintf(offset, sizeof(offset), ch.offset_format, offsets.*(ch.offset) / ch.scale);
+            n += snprintf(buf + n, len - n, "%s{\"id\":\"%s\",\"unit\":\"%s\",\"resolution\":%s,\"offset\":%s}",
+                          c ? "," : "", ch.id, ch.unit, ch.resolution, offset);
         }
         if (n >= 0 && static_cast<size_t>(n) < len) {
             n += snprintf(buf + n, len - n, "]}");

@@ -24,6 +24,28 @@ menu "Weather Station"
             How often the latest measurement is stored in the flash history
             (FR-7.2). With the 5 MB partition, 60 s keeps about 7.4 months.
 
+    config WS_ALTITUDE_M
+        int "Altitude of the station (metres)"
+        range -500 9000
+        default 0
+        help
+            Height of the station above mean sea level, including the floor
+            it stands on (FR-11.2). Used to reduce the measured pressure to
+            sea level (QNH), as weather services report it. About 8 m of
+            error give 1 hPa of error. 0 = sea level.
+
+    config WS_METAR_STATION
+        string "METAR airport for the pressure check (ICAO code)"
+        default ""
+        help
+            ICAO code of a nearby airport, e.g. SBGR (FR-11.4). Once an hour
+            the station fetches its METAR from aviationweather.gov over HTTPS
+            and compares its own sea-level pressure with the airport QNH; the
+            median difference is shown by `sys`, the web page and MQTT, with
+            a suggested correction. Nothing is changed automatically. Pick an
+            airport less than about 50 km away. Leave empty to disable (no
+            request leaves the station). Needs Wi-Fi.
+
     config WS_DISPLAY_TIMEOUT_MIN
         int "Display switch-off after inactivity (minutes)"
         range 0 1440

@@ -14,8 +14,10 @@
 #include "freertos/task.h"
 #include "identity.h"
 #include "lwip/ip_addr.h"
+#include "metar.h"
 #include "net_time.h"
 #include "ping/ping_sock.h"
+#include "quality.h"
 #include "telemetry.h"
 #include "web_server.h"
 
@@ -282,9 +284,14 @@ int cmd_sys(int, char **)
         if (identity::sensor(i, s)) {
             char id[24];
             identity::format_sensor_id(s.type, s.fingerprint, id, sizeof(id));
-            printf("Sensor %u: %s at i2c@0x%02x\n", static_cast<unsigned>(i), id, s.address);
+            char cal[96];
+            quality::format_offsets(quality::offsets(i), cal, sizeof(cal));
+            printf("Sensor %u: %s at i2c@0x%02x, %s\n", static_cast<unsigned>(i), id, s.address, cal);
         }
     }
+    // FR-11.2, FR-11.4
+    printf("Altitude: %d m, sea-level pressure factor %.4f\n", quality::altitude_m(), quality::msl_factor());
+    metar::print_status();
     if (telemetry::enabled()) {
         printf("MQTT: %s, client ID \"%s\"\n", telemetry::connected() ? "connected" : "disconnected",
                telemetry::client_id());
@@ -312,7 +319,8 @@ esp_err_t register_console_command()
 {
     esp_console_cmd_t cmd = {};
     cmd.command = "sys";
-    cmd.help = "System health: uptime, last start reason, heap, Wi-Fi, gateway ping, device and sensor, MQTT, web";
+    cmd.help = "System health: uptime, last start reason, heap, Wi-Fi, gateway ping, device, sensor and "
+               "calibration, altitude, METAR check, MQTT, web";
     cmd.func = cmd_sys;
     return esp_console_cmd_register(&cmd);
 }

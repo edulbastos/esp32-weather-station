@@ -67,8 +67,9 @@ source ~/.espressif/tools/activate_idf_v6.1.sh
 
 # 2. Set the target (first time only)
 idf.py set-target esp32
-# 3. Set the Wi-Fi credentials and, optionally, the station name, the measurement
-#    interval, the MQTT broker and the history interval (first time only):
+# 3. Set the Wi-Fi credentials and, optionally, the station name, the altitude,
+#    the METAR airport, the measurement interval, the MQTT broker and the
+#    history interval (first time only):
 #    "Weather Station" menu
 idf.py menuconfig
 
@@ -104,10 +105,10 @@ The identifiers appear in the boot log, in `sys`, on the web page, in every MQTT
 With a broker URI set in menuconfig (for example `mqtt://192.168.1.10:1883`), the station publishes the latest reading every 60 s (configurable) to its own topic `weather-station/<device_id>/data`, as JSON with QoS 1 (the broker confirms each message; unconfirmed ones are sent again after a reconnection) and the retain flag:
 
 ```json
-{"device_id":"ws-a0b76551a842","sensor_id":"bme280-3fa91c07","time":1792161125,"temperature_c":23.41,"humidity_rh":56.12,"pressure_hpa":1012.84,"rssi_dbm":-67}
+{"device_id":"ws-a0b76551a842","sensor_id":"bme280-3fa91c07","time":1792161125,"temperature_c":23.41,"humidity_rh":56.12,"pressure_hpa":930.12,"pressure_msl_hpa":1016.78,"dew_point_c":14.16,"rssi_dbm":-67}
 ```
 
-`time` is the Unix time of the reading and appears once the clock has been synchronized. `rssi_dbm` is the weakest Wi-Fi signal measured since the previous message (sampled with every measurement), so a consumer can follow the quality of the link over time; it is not stored in the flash history. On every connection, and after a sensor replacement, the station also publishes a retained message to `weather-station/<device_id>/info` with its name, firmware version, intervals and sensors (with channels, units and resolution); a management system finds all stations by subscribing to `weather-station/+/info`. The topic `weather-station/<device_id>/status` says whether the station is reachable: `online` while it is connected, and `offline`, which the broker publishes by itself about 90 s after the station stops answering (MQTT last will). To watch everything: `mosquitto_sub -h 192.168.1.10 -t 'weather-station/#' -v`. With an empty URI, or without Wi-Fi, nothing is sent; broker failures never stop the station.
+`time` is the Unix time of the reading and appears once the clock has been synchronized. `pressure_hpa` is the pressure measured at the station, `pressure_msl_hpa` the same reduced to sea level, and `dew_point_c` the dew point (see [Measurement quality](#measurement-quality)). `rssi_dbm` is the weakest Wi-Fi signal measured since the previous message (sampled with every measurement), so a consumer can follow the quality of the link over time; it is not stored in the flash history. On every connection, and after a sensor replacement, the station also publishes a retained message to `weather-station/<device_id>/info` with its name, firmware version, intervals and sensors (with channels, units and resolution); a management system finds all stations by subscribing to `weather-station/+/info`. The topic `weather-station/<device_id>/status` says whether the station is reachable: `online` while it is connected, and `offline`, which the broker publishes by itself about 90 s after the station stops answering (MQTT last will). To watch everything: `mosquitto_sub -h 192.168.1.10 -t 'weather-station/#' -v`. With an empty URI, or without Wi-Fi, nothing is sent; broker failures never stop the station.
 
 > **Updating from v1.x:** up to v1.9.1 the readings went to `weather-station/data`, without identifiers. Subscribers must move to `weather-station/<device_id>/data` (or `weather-station/+/data`). The station clears the old retained message on that topic.
 
@@ -124,7 +125,7 @@ The page shows the current values (refreshed at every measurement) and charts fr
 | Address | Content |
 |---|---|
 | `/` | the page |
-| `/api/current` | current values, identifiers, Wi-Fi signal (`rssi_dbm`), firmware version and heap as JSON |
+| `/api/current` | current values (with sea-level pressure and dew point), identifiers, calibration, METAR check, Wi-Fi signal (`rssi_dbm`), firmware version and heap as JSON |
 | `/api/info` | device, firmware, intervals and sensors as JSON (same as the MQTT info message) |
 | `/api/charts` | the three chart periods of the page (1 h, 24 h, 7 d) in one answer, as JSON |
 | `/api/history?hours=24&points=96` | history of the last N hours as JSON, averaged into P points (defaults: 24 hours; the chart's number of points for 1, 24 and 168 hours, else 150) |
@@ -138,6 +139,24 @@ curl -OJ --compressed http://<ip>/history.csv              # keeps the name hist
 ```
 
 The page has no password and is read-only; anyone on the local network can see it. While the full CSV is downloading, the page pauses its updates (the server handles one request at a time).
+
+## Measurement quality
+
+**Altitude and sea-level pressure.** Weather services and airports report the pressure reduced to sea level (QNH); the pressure measured at 900 m is about 100 hPa lower. Set the altitude of the station in menuconfig ("Altitude of the station", in metres, including the floor it stands on): the display, the web page (main value and chart) and MQTT (`pressure_msl_hpa`) then show the sea-level pressure. Each 8 m of error in the altitude gives about 1 hPa of error; a topographic map or Google Earth is better than the GPS of a phone. The history and the CSV keep the pressure measured at the station.
+
+**Dew point.** Computed from the temperature and the humidity (Magnus formula), shown on the web page below the humidity and sent by MQTT (`dew_point_c`).
+
+**Calibration.** Each channel can be corrected by an offset, set on the serial console:
+
+| Command | Effect |
+|---|---|
+| `cal` | shows the offsets |
+| `cal set temperature -1.25` | subtracts 1.25 °C from every reading (limits: ±5 °C, ±10 %RH, ±10 hPa) |
+| `cal clear pressure` / `cal clear` | resets one offset / all of them |
+
+The offsets are applied to every reading before it is shown, sent or stored, and are kept in NVS across restarts and firmware updates. They belong to the chip: after a sensor replacement they are reset to 0, with a warning. Every change is recorded in the flash history, so it is known which readings were corrected.
+
+**Check against an airport.** With the ICAO code of a nearby airport set in menuconfig ("METAR airport", for example `SBGR`), the station fetches its METAR from aviationweather.gov once an hour and compares its own sea-level pressure with the airport's QNH. After a day of samples, `sys`, the web page footer and the MQTT topic `weather-station/<device_id>/metar` show the median difference of the last 7 days and the two corrections that would cancel it: a pressure offset (`cal set pressure ...`) or a different altitude. The station never applies them by itself; set the altitude first if it is uncertain, and the offset for what remains. A warning is logged when the median exceeds ±2 hPa. Pick an airport less than about 50 km away; leave the code empty to disable the check (no request leaves the station).
 
 ## Measurement history
 
@@ -171,7 +190,7 @@ To save the CSV on the PC, press `Ctrl+T` then `Ctrl+L` in the monitor before `l
 
 To see how often Wi-Fi drops, `sys` and the `health:` line count the connections lost since start per disconnection reason, for example `Wi-Fi drops 3 (reason 6: 2, reason 200: 1), last 420 s ago`.
 
-In the serial monitor, `sys` shows the uptime, why the station last started, the free memory, the device and sensor identifiers and the firmware version, the Wi-Fi link (signal, IP, gateway), the network watchdog (last sign of traffic and where it came from), the MQTT state and how many web requests were served. Every 10 minutes the same figures appear in the log as a `health:` line.
+In the serial monitor, `sys` shows the uptime, why the station last started, the free memory, the device and sensor identifiers and the firmware version, the calibration, the altitude, the METAR check, the Wi-Fi link (signal, IP, gateway), the network watchdog (last sign of traffic and where it came from), the MQTT state and how many web requests were served. Every 10 minutes the same figures appear in the log as a `health:` line.
 
 If Wi-Fi stays associated but no traffic gets through, the station notices it within about 3 minutes (every minute it looks for MQTT or web traffic, and pings the router only when there is none), reconnects Wi-Fi, and after two reconnections without success restarts itself. The history in flash is kept. After a restart, the first log lines show the reason (`health: Started by: software restart`).
 
@@ -179,14 +198,14 @@ The MQTT client ID is the device identifier (`ws-` followed by the board's MAC a
 
 ## Configuration
 
-The station name, the measurement interval (1 to 3600 s, default 2 s), the Wi-Fi credentials, and the MQTT broker URI, user, password and publish interval (1 to 86400 s, default 60 s), the history log interval (1 to 86400 s, default 60 s), and the display switch-off after inactivity (0 to 1440 min, default 5 min) are set with `idf.py menuconfig` in the "Weather Station" menu.
+The station name, the altitude (−500 to 9000 m, default 0), the METAR airport for the pressure check (default empty, off), the measurement interval (1 to 3600 s, default 2 s), the Wi-Fi credentials, and the MQTT broker URI, user, password and publish interval (1 to 86400 s, default 60 s), the history log interval (1 to 86400 s, default 60 s), and the display switch-off after inactivity (0 to 1440 min, default 5 min) are set with `idf.py menuconfig` in the "Weather Station" menu.
 
 All other tunable parameters live in [main/config.h](main/config.h):
 
 - I2C pins, frequency and port;
 - BME280 and SSD1306 addresses;
 - display size (128x64 or 128x32), contrast and yellow band;
-- sea-level pressure used for the altitude estimate;
+- calibration limits and the parameters of the METAR check;
 - task periods, stack sizes and priorities;
 - NTP server, time zone (default UTC-3), Wi-Fi retry interval and signal icon thresholds;
 - MQTT topic prefix, QoS, retain flag and reconnect interval;
@@ -198,13 +217,14 @@ The flash layout is in [partitions.csv](partitions.csv).
 
 ## Architecture
 
-The firmware runs five FreeRTOS tasks, plus the serial console:
+The firmware runs five FreeRTOS tasks, a sixth when a METAR airport is set, plus the serial console:
 
-- **`taskMeasure`**: reads the BME280 at the measurement interval (2 s by default).
+- **`taskMeasure`**: reads the BME280 at the measurement interval (2 s by default) and applies the calibration.
 - **`taskDisplay`**: refreshes the display every 1 s, and right away when a new measurement arrives, with a measurement dot, the date and time and a Wi-Fi signal icon in the header.
 - **`taskPublish`**: sends the latest reading to the MQTT broker at the publish interval (60 s by default), only when the broker is configured.
 - **`taskLog`**: stores the latest reading in the flash history at the log interval (60 s by default).
 - **`taskHealth`**: pings the router every minute and recovers a stuck network, and logs a health line every 10 minutes.
+- **`taskMetar`**: once an hour, compares the sea-level pressure with the METAR of the configured airport.
 
 The HTTP server (`web_server`) runs in its own ESP-IDF task once Wi-Fi has an IP address.
 
@@ -227,9 +247,11 @@ main/
 ├── identity.*    # device and sensor identifiers, station name
 ├── gzip_stream.* # compact gzip compressor for the CSV download
 ├── charts.*      # chart tables (1 h / 24 h / 7 d) kept in RAM for the web page
+├── quality.*     # calibration + `cal` command, sea-level pressure, dew point
+├── metar.*       # hourly check of the pressure against an airport METAR
 ├── web_page.html # the web page, embedded in the firmware
 ├── idf_component.yml  # external component: espressif/mqtt
-└── Kconfig.projbuild  # menuconfig menu: name, intervals, Wi-Fi, MQTT broker
+└── Kconfig.projbuild  # menuconfig menu: name, altitude, METAR airport, intervals, Wi-Fi, MQTT broker
 partitions.csv    # flash layout: nvs, phy_init, factory app (2 MB), history (5 MB)
 ```
 
@@ -237,6 +259,5 @@ The full functional specification is in [esp32-weather-station.md](esp32-weather
 
 ## Roadmap
 
-- Sensor calibration
 - Hardware RTC module so the time survives power loss without Wi-Fi
 - A second sensor (the history format and the identifiers already allow it)

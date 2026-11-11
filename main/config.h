@@ -57,10 +57,40 @@ constexpr uint32_t   BUTTON_DEBOUNCE_MS  = 250;
 constexpr uint32_t   DISPLAY_TIMEOUT_MS  = CONFIG_WS_DISPLAY_TIMEOUT_MIN * 60 * 1000;
 
 // ---------------------------------------------------------------------------
-// Measurement
+// Measurement quality (FR-11.x)
 // ---------------------------------------------------------------------------
-// Reference sea-level pressure used for the altitude estimate (hPa)
-constexpr float SEA_LEVEL_PRESSURE_HPA = 1013.25f;
+// FR-11.1: largest calibration offsets accepted by the `cal` command
+constexpr float CAL_MAX_TEMP_C    = 5.0f;   // degC
+constexpr float CAL_MAX_HUM_RH    = 10.0f;  // %RH
+constexpr float CAL_MAX_PRESS_HPA = 10.0f;  // hPa
+// FR-11.2: altitude of the station, set via `idf.py menuconfig` -> "Weather
+// Station" (metres, default 0); reduces the pressure to sea level (QNH)
+constexpr int   ALTITUDE_M        = CONFIG_WS_ALTITUDE_M;
+
+// ---------------------------------------------------------------------------
+// Check of the sea-level pressure against a nearby airport (FR-11.4)
+// ---------------------------------------------------------------------------
+// ICAO code of the airport, set via `idf.py menuconfig` -> "Weather Station";
+// empty = check disabled, no request leaves the station
+constexpr const char *METAR_STATION     = CONFIG_WS_METAR_STATION;
+// API of the Aviation Weather Center (aviationweather.gov/data/api): latest
+// METAR of one airport as JSON; at most 100 requests per minute (the station
+// makes 2 per hour at most); 204 = no recent observation
+constexpr const char *METAR_URL_FORMAT  = "https://aviationweather.gov/api/data/metar?ids=%s&format=json";
+// The API asks automated clients for a User-Agent of their own; the firmware
+// version is appended. No identifier of the station is sent.
+constexpr const char *METAR_USER_AGENT  = "esp32-weather-station";
+constexpr uint32_t    METAR_FETCH_MINUTE = 10;   // minute of the hour of the request
+constexpr uint32_t    METAR_RETRY_MINUTE = 25;   // second try when the observation was not new
+constexpr int         METAR_TIMEOUT_MS   = 10000;
+constexpr size_t      METAR_MAX_ANSWER   = 2048;          // bytes; longer answers are refused
+constexpr size_t      METAR_MIN_HEAP_BLOCK = 48 * 1024;   // the TLS handshake needs about 40 KB
+constexpr uint32_t    METAR_MATCH_S      = 120;   // station data within +/- this of the observation
+constexpr float       METAR_QNH_MIN_HPA  = 850.0f;  // plausible reference values
+constexpr float       METAR_QNH_MAX_HPA  = 1090.0f;
+constexpr size_t      METAR_WINDOW       = 168;   // samples kept (7 days of hourly samples)
+constexpr size_t      METAR_MIN_SAMPLES  = 24;    // before the median is reported
+constexpr float       METAR_WARN_HPA     = 2.0f;  // |median| above this is logged as a warning
 
 // ---------------------------------------------------------------------------
 // Time of day via Wi-Fi + NTP (FR-5.x)
@@ -185,6 +215,7 @@ constexpr uint32_t    LOG_TASK_STACK      = 4096;
 constexpr uint32_t    CONSOLE_TASK_STACK  = 6144;  // `log dump` formats floats
 constexpr uint32_t    HEALTH_TASK_STACK   = 4096;
 constexpr uint32_t    WEB_TASK_STACK      = 6144;  // JSON/CSV formatting + 1 KB send buffer
+constexpr uint32_t    METAR_TASK_STACK    = 8192;  // HTTPS client and TLS handshake (FR-11.4)
 constexpr UBaseType_t MEASURE_TASK_PRIO   = 5;
 constexpr UBaseType_t DISPLAY_TASK_PRIO   = 4;
 constexpr UBaseType_t PUBLISH_TASK_PRIO   = 3;
@@ -192,6 +223,7 @@ constexpr UBaseType_t LOG_TASK_PRIO       = 3;
 constexpr UBaseType_t CONSOLE_TASK_PRIO   = 2;
 constexpr UBaseType_t WEB_TASK_PRIO       = 2;
 constexpr UBaseType_t HEALTH_TASK_PRIO    = 2;
+constexpr UBaseType_t METAR_TASK_PRIO     = 1;
 
 // Max time a task waits for a mutex before giving up on the current cycle
 constexpr uint32_t    MUTEX_TIMEOUT_MS    = 500;

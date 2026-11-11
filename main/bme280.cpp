@@ -1,6 +1,5 @@
 #include "bme280.h"
 
-#include <cmath>
 #include <cstring>
 #include "config.h"
 #include "esp_log.h"
@@ -193,11 +192,6 @@ esp_err_t Bme280::read(Bme280Data &out)
     out.pressure_hpa  = compensate_pressure(adc_p) / 256.0f / 100.0f;
     out.humidity_rh   = compensate_humidity(adc_h) / 1024.0f;
     return ESP_OK;
-}
-
-float Bme280::altitude_m(float pressure_hpa, float sea_level_hpa)
-{
-    return 44330.0f * (1.0f - std::pow(pressure_hpa / sea_level_hpa, 0.1903f));
 }
 
 // --- Bosch BME280 datasheet compensation formulas (section 4.2.3) ----------

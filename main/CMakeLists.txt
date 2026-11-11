@@ -1,9 +1,10 @@
-idf_component_register(SRCS "main.cpp" "bme280.cpp" "ssd1306.cpp" "net_time.cpp" "telemetry.cpp" "history.cpp" "web_server.cpp" "health.cpp" "charts.cpp" "identity.cpp" "gzip_stream.cpp"
+idf_component_register(SRCS "main.cpp" "bme280.cpp" "ssd1306.cpp" "net_time.cpp" "telemetry.cpp" "history.cpp" "web_server.cpp" "health.cpp" "charts.cpp" "identity.cpp" "gzip_stream.cpp" "quality.cpp" "metar.cpp"
                        INCLUDE_DIRS "."
                        EMBED_FILES "web_page.html"
                        REQUIRES esp_driver_i2c esp_driver_gpio log freertos
                                 esp_wifi esp_netif esp_event nvs_flash lwip
                                 esp_partition console esp_http_server esp_timer esp_app_format
+                                esp_http_client mbedtls
                                 espressif__mqtt)
 
 # FR-8.2: the web page is also embedded gzip-compressed (about a third of the

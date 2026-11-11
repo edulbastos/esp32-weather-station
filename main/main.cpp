@@ -6,6 +6,10 @@
 //   taskDisplay - redraws the OLED every DISPLAY_PERIOD_MS
 //   taskPublish - sends the latest measurement via MQTT every MQTT_PUBLISH_PERIOD_MS
 //   taskLog     - stores the latest measurement in the flash history every LOG_PERIOD_MS
+// Every reading is calibrated (quality, FR-11.1) before it is used; the
+// sea-level pressure and the dew point are derived when shown or sent. With
+// an airport configured, taskMetar (metar) checks the sea-level pressure
+// against its METAR once an hour (FR-11.4).
 // The BOOT button and the `display` console command switch the OLED on and
 // off; it also switches off after a period without interaction (FR-9.x).
 // A web server (web_server) shows the current values and the history on the
@@ -34,7 +38,9 @@
 #include "health.h"
 #include "history.h"
 #include "identity.h"
+#include "metar.h"
 #include "net_time.h"
+#include "quality.h"
 #include "ssd1306.h"
 #include "telemetry.h"
 #include "web_server.h"
@@ -86,7 +92,9 @@ esp_err_t init_i2c_bus()
 void register_sensor()
 {
     const identity::Sensor s = {identity::SENSOR_BME280, 0, config::BME280_ADDR, s_sensor.fingerprint()};
-    if (identity::set_sensor(s)) {
+    const bool replaced = identity::set_sensor(s);
+    quality::bind_sensor(s);  // FR-11.1: the calibration belongs to the chip
+    if (replaced) {
         telemetry::publish_info();  // fails harmlessly while not connected
     }
 }
@@ -221,7 +229,8 @@ void render_screen(const SharedData &data, bool measure_icon)
     if (data.valid) {
         snprintf(temp, sizeof(temp), "%.1f", data.values.temperature_c);
         snprintf(hum, sizeof(hum), "%.1f", data.values.humidity_rh);
-        snprintf(press, sizeof(press), "%.1f", data.values.pressure_hpa);
+        // FR-11.2: the sea-level pressure (QNH)
+        snprintf(press, sizeof(press), "%.1f", quality::to_msl(data.values.pressure_hpa));
     } else {
         snprintf(temp, sizeof(temp), "--.-");
         snprintf(hum, sizeof(hum), "--.-");
@@ -291,6 +300,7 @@ void taskMeasure(void *)
 
         if (err == ESP_OK) {
             errors = 0;
+            quality::apply(0, sample);  // FR-11.1
             // FR-5.4: timestamp the reading once the clock is synchronized.
             char stamp[24] = "";
             struct tm now;
@@ -298,9 +308,15 @@ void taskMeasure(void *)
                 sample_time = time(nullptr);
                 strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S  ", &now);
             }
-            ESP_LOGI(TAG, "%sT=%.2f C  H=%.2f %%RH  P=%.2f hPa  Alt~%.0f m", stamp,
-                     sample.temperature_c, sample.humidity_rh, sample.pressure_hpa,
-                     Bme280::altitude_m(sample.pressure_hpa, config::SEA_LEVEL_PRESSURE_HPA));
+            // FR-11.2, FR-11.3: sea-level pressure and dew point.
+            char dew[16] = "--";
+            float dew_c;
+            if (quality::dew_point(sample.temperature_c, sample.humidity_rh, dew_c)) {
+                snprintf(dew, sizeof(dew), "%.2f", dew_c);
+            }
+            ESP_LOGI(TAG, "%sT=%.2f C  H=%.2f %%RH  Td=%s C  P=%.2f hPa  QNH=%.2f hPa", stamp,
+                     sample.temperature_c, sample.humidity_rh, dew, sample.pressure_hpa,
+                     quality::to_msl(sample.pressure_hpa));
         } else {
             errors++;
             ESP_LOGW(TAG, "BME280 read failed (%d in a row): %s", errors, esp_err_to_name(err));
@@ -649,6 +665,9 @@ esp_err_t start_console(bool with_history)
     if (err == ESP_OK) {
         err = health::register_console_command();
     }
+    if (err == ESP_OK) {
+        err = quality::register_console_command();
+    }
     if (err == ESP_OK && with_history) {
         err = history::register_console_command();
     }
@@ -746,8 +765,16 @@ extern "C" void app_main(void)
         } else if (err != ESP_ERR_INVALID_STATE) {
             ESP_LOGW(TAG, "Data transmission unavailable: %s", esp_err_to_name(err));
         }
-    } else if (config::MQTT_BROKER_URI[0] != '\0') {
+
+        // FR-11.4: the METAR check needs Wi-Fi too and is not critical.
+        const esp_err_t metar_err = metar::start();
+        if (metar_err != ESP_OK && metar_err != ESP_ERR_INVALID_STATE && metar_err != ESP_ERR_INVALID_ARG) {
+            ESP_LOGW(TAG, "METAR check unavailable: %s", esp_err_to_name(metar_err));
+        }    } else if (config::MQTT_BROKER_URI[0] != '\0') {
         ESP_LOGW(TAG, "MQTT broker configured but Wi-Fi is not, data transmission disabled");
+    }
+    if (config::ALTITUDE_M != 0) {
+        ESP_LOGI(TAG, "Altitude %d m, sea-level pressure factor %.4f", config::ALTITUDE_M, quality::msl_factor());
     }
 
     // FR-7.6: the history is not critical either; without it the station runs on.

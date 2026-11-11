@@ -20,7 +20,9 @@
 #include "health.h"
 #include "history.h"
 #include "identity.h"
+#include "metar.h"
 #include "net_time.h"
+#include "quality.h"
 
 static const char *TAG = "web";
 
@@ -220,7 +222,8 @@ esp_err_t handle_favicon(httpd_req_t *req)
     return httpd_resp_send(req, nullptr, 0);
 }
 
-// FR-8.3, FR-10.5: current values and identifiers as JSON.
+// FR-8.3, FR-10.5: current values and identifiers as JSON; FR-11.x: the
+// sea-level pressure, the dew point, the calibration and the METAR check.
 esp_err_t handle_current(httpd_req_t *req)
 {
     web_server::Current cur = {};
@@ -228,7 +231,13 @@ esp_err_t handle_current(httpd_req_t *req)
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Data busy, try again");
     }
 
-    char json[896];
+    // On the heap: with the METAR object the answer is about 1 KB.
+    constexpr size_t JSON_BYTES = 1408;
+    std::unique_ptr<char[]> buf(new (std::nothrow) char[JSON_BYTES]);
+    if (!buf) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+    }
+    char *json = buf.get();
     char time_field[24] = "null";
     if (cur.time != 0) {
         snprintf(time_field, sizeof(time_field), "%lld", static_cast<long long>(cur.time));
@@ -243,20 +252,41 @@ esp_err_t handle_current(httpd_req_t *req)
     identity::sensor_id(0, sensor_id, sizeof(sensor_id));
     // FR-8.9: firmware version and heap, for troubleshooting from the page.
     const health::Heap heap = health::heap_now();
-    const int n = snprintf(json, sizeof(json),
+    // FR-11.1: calibration offsets of the sensor; FR-11.4: METAR check.
+    const quality::Offsets cal = quality::offsets(0);
+    char metar_json[metar::JSON_BYTES];
+    const int m = metar::json(metar_json, sizeof(metar_json));
+    if (m < 0 || static_cast<size_t>(m) >= sizeof(metar_json)) {
+        snprintf(metar_json, sizeof(metar_json), "null");
+    }
+    const int n = snprintf(json, JSON_BYTES,
                            "{\"device_id\":\"%s\",\"name\":\"%s\",\"sensor_id\":\"%s\",\"firmware\":\"%s\","
-                           "\"heap_free_kb\":%u,\"heap_min_kb\":%u,\"heap_largest_kb\":%u,",
+                           "\"heap_free_kb\":%u,\"heap_min_kb\":%u,\"heap_largest_kb\":%u,\"altitude_m\":%d,"
+                           "\"calibration\":{\"temperature_c\":%.2f,\"humidity_rh\":%.2f,\"pressure_hpa\":%.1f},"
+                           "\"metar\":%s,",
                            identity::device_id(), identity::device_name_json(), sensor_id,
-                           identity::firmware_version(), heap.free_kb, heap.min_kb, heap.largest_kb);
+                           identity::firmware_version(), heap.free_kb, heap.min_kb, heap.largest_kb,
+                           quality::altitude_m(), cal.temp_centi / 100.0, cal.hum_centi / 100.0,
+                           cal.press_deci / 10.0, metar_json);
+    if (n < 0 || static_cast<size_t>(n) >= JSON_BYTES) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Answer does not fit");
+    }
     char *rest = json + n;
-    const size_t rest_len = sizeof(json) - n;
+    const size_t rest_len = JSON_BYTES - n;
     if (cur.valid) {
+        // FR-11.3: null when there is no dew point.
+        char dew_field[16] = "null";
+        float dew = 0;
+        if (quality::dew_point(cur.values.temperature_c, cur.values.humidity_rh, dew)) {
+            snprintf(dew_field, sizeof(dew_field), "%.2f", dew);
+        }
         snprintf(rest, rest_len,
                  "\"valid\":true,\"time\":%s,\"age_s\":%.1f,\"temperature_c\":%.2f,"
-                 "\"humidity_rh\":%.2f,\"pressure_hpa\":%.2f,\"wifi_level\":%d,\"rssi_dbm\":%s,"
-                 "\"measure_period_s\":%lu,\"log_period_s\":%lu}",
+                 "\"humidity_rh\":%.2f,\"pressure_hpa\":%.2f,\"pressure_msl_hpa\":%.2f,\"dew_point_c\":%s,"
+                 "\"wifi_level\":%d,\"rssi_dbm\":%s,\"measure_period_s\":%lu,\"log_period_s\":%lu}",
                  time_field, cur.age_ms / 1000.0, cur.values.temperature_c, cur.values.humidity_rh,
-                 cur.values.pressure_hpa, net_time::wifi_level(), rssi_field,
+                 cur.values.pressure_hpa, quality::to_msl(cur.values.pressure_hpa), dew_field,
+                 net_time::wifi_level(), rssi_field,
                  static_cast<unsigned long>(config::MEASURE_PERIOD_MS / 1000),
                  static_cast<unsigned long>(config::LOG_PERIOD_MS / 1000));
     } else {
@@ -291,10 +321,10 @@ bool print_chart(ChunkWriter &out, uint32_t hours, bool synced, charts::Point *p
     uint32_t bucket_s = 0;
     const size_t n = charts::snapshot(hours, synced ? time(nullptr) : 0, pts, bucket_s);
     out.print("{\"hours\":%lu,\"points\":%lu,\"bucket_s\":%lu,\"log_period_s\":%lu,\"measure_period_s\":%lu,"
-              "\"source\":\"measurements\",\"records\":[",
+              "\"altitude_m\":%d,\"source\":\"measurements\",\"records\":[",
               static_cast<unsigned long>(hours), static_cast<unsigned long>(charts::points_for(hours)),
               static_cast<unsigned long>(bucket_s), static_cast<unsigned long>(config::LOG_PERIOD_MS / 1000),
-              static_cast<unsigned long>(config::MEASURE_PERIOD_MS / 1000));
+              static_cast<unsigned long>(config::MEASURE_PERIOD_MS / 1000), quality::altitude_m());
     for (size_t i = 0; i < n; i++) {
         out.print("%s[%lld,%.2f,%.2f,%.1f]", i ? "," : "", static_cast<long long>(pts[i].time),
                   pts[i].temperature_c, pts[i].humidity_rh, pts[i].pressure_hpa);
@@ -376,10 +406,10 @@ esp_err_t handle_history(httpd_req_t *req)
 
     ChunkWriter out(req, "application/json", NO_STORE);
     out.print("{\"hours\":%lu,\"points\":%lu,\"bucket_s\":%lu,\"log_period_s\":%lu,\"measure_period_s\":%lu,"
-              "\"source\":\"history\",\"records\":[",
+              "\"altitude_m\":%d,\"source\":\"history\",\"records\":[",
               static_cast<unsigned long>(hours), static_cast<unsigned long>(points),
               static_cast<unsigned long>(bucket_s), static_cast<unsigned long>(config::LOG_PERIOD_MS / 1000),
-              static_cast<unsigned long>(config::MEASURE_PERIOD_MS / 1000));
+              static_cast<unsigned long>(config::MEASURE_PERIOD_MS / 1000), quality::altitude_m());
 
     struct {
         int64_t index = -1;

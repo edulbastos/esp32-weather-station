@@ -12,6 +12,7 @@
 #include "freertos/timers.h"
 #include "identity.h"
 #include "net_time.h"
+#include "quality.h"
 #include "mqtt_client.h"
 
 static const char *TAG = "telemetry";
@@ -26,6 +27,7 @@ esp_mqtt_client_handle_t s_client = nullptr;
 char s_data_topic[48] = "";
 char s_info_topic[48] = "";
 char s_status_topic[48] = "";
+char s_metar_topic[48] = "";
 TimerHandle_t s_retry_timer = nullptr;
 std::atomic<bool> s_client_started{false};
 std::atomic<bool> s_connected{false};
@@ -145,6 +147,8 @@ esp_err_t start()
     snprintf(s_info_topic, sizeof(s_info_topic), "%s/%s/info", config::MQTT_TOPIC_PREFIX, identity::device_id());
     snprintf(s_status_topic, sizeof(s_status_topic), "%s/%s/status", config::MQTT_TOPIC_PREFIX,
              identity::device_id());
+    snprintf(s_metar_topic, sizeof(s_metar_topic), "%s/%s/metar", config::MQTT_TOPIC_PREFIX,
+             identity::device_id());
     // FR-6.7: the broker publishes "offline" when the station stops answering
     // (about 1.5 keepalive periods) or the connection drops.
     cfg.session.last_will.topic = s_status_topic;
@@ -196,14 +200,20 @@ esp_err_t publish(const Bme280Data &data, time_t sample_time, int rssi_dbm)
     if (rssi_dbm != net_time::NO_RSSI) {
         snprintf(rssi_field, sizeof(rssi_field), ",\"rssi_dbm\":%d", rssi_dbm);
     }
+    // FR-11.3: the dew point is left out when there is none.
+    char dew_field[24] = "";
+    float dew = 0;
+    if (quality::dew_point(data.temperature_c, data.humidity_rh, dew)) {
+        snprintf(dew_field, sizeof(dew_field), ",\"dew_point_c\":%.2f", dew);
+    }
     char sensor_id[24];
     identity::sensor_id(0, sensor_id, sizeof(sensor_id));
-    char payload[256];
+    char payload[320];
     const int len = snprintf(payload, sizeof(payload),
                              "{\"device_id\":\"%s\",\"sensor_id\":\"%s\",%s\"temperature_c\":%.2f,"
-                             "\"humidity_rh\":%.2f,\"pressure_hpa\":%.2f%s}",
+                             "\"humidity_rh\":%.2f,\"pressure_hpa\":%.2f,\"pressure_msl_hpa\":%.2f%s%s}",
                              identity::device_id(), sensor_id, time_field, data.temperature_c, data.humidity_rh,
-                             data.pressure_hpa, rssi_field);
+                             data.pressure_hpa, quality::to_msl(data.pressure_hpa), dew_field, rssi_field);
 
     const int id = esp_mqtt_client_publish(s_client, s_data_topic, payload, len,
                                            config::MQTT_QOS, config::MQTT_RETAIN);
@@ -229,6 +239,18 @@ esp_err_t publish_info()
         return ESP_FAIL;
     }
     ESP_LOGI(TAG, "Published info to %s", s_info_topic);
+    return ESP_OK;
+}
+
+esp_err_t publish_metar(const char *json)
+{
+    if (!s_connected) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (esp_mqtt_client_publish(s_client, s_metar_topic, json, 0, config::MQTT_QOS, true) < 0) {
+        return ESP_FAIL;
+    }
+    ESP_LOGI(TAG, "Published METAR check to %s", s_metar_topic);
     return ESP_OK;
 }
 

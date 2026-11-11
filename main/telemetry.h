@@ -18,7 +18,8 @@ esp_err_t start();
 
 // Publishes one measurement of the sensor at position 0 as JSON.
 // `sample_time` is the Unix time of the reading, or 0 if the clock is not
-// synchronized yet (field left out). `rssi_dbm` is the lowest Wi-Fi RSSI
+// synchronized yet (field left out). The sea-level pressure (FR-11.2) and
+// the dew point (FR-11.3) are added. `rssi_dbm` is the lowest Wi-Fi RSSI
 // since the previous message (FR-5.8), or net_time::NO_RSSI (field left
 // out). Returns ESP_ERR_INVALID_STATE while not
 // connected to the broker.
@@ -28,6 +29,11 @@ esp_err_t publish(const Bme280Data &data, time_t sample_time, int rssi_dbm);
 // call it again after a sensor change. Returns ESP_ERR_INVALID_STATE while
 // not connected to the broker.
 esp_err_t publish_info();
+
+// FR-11.4: publishes the METAR check state (JSON) to
+// weather-station/<device_id>/metar (retained). Returns
+// ESP_ERR_INVALID_STATE while not connected to the broker.
+esp_err_t publish_metar(const char *json);
 
 // For the `sys` console command: client created, and connected to the broker.
 bool enabled();

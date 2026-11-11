@@ -32,6 +32,7 @@
   .label { color: var(--muted); font-size: 13px; }
   .value { font-size: 34px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .unit { font-size: 15px; font-weight: 400; color: var(--muted); margin-left: 4px; }
+  .sub { color: var(--muted); font-size: 13px; min-height: 1.45em; }
   .charts { display: grid; gap: 12px; }
   .chart svg { display: block; width: 100%; height: 170px; margin-top: 4px; }
   .chart text { fill: var(--muted); font-size: 11px; }
@@ -70,9 +71,11 @@
     <div class="card"><div class="label">Temperature</div>
       <div class="value"><span id="temp">--.-</span><span class="unit">°C</span></div></div>
     <div class="card"><div class="label">Humidity</div>
-      <div class="value"><span id="hum">--.-</span><span class="unit">%RH</span></div></div>
-    <div class="card"><div class="label">Pressure</div>
-      <div class="value"><span id="pres">----.-</span><span class="unit">hPa</span></div></div>
+      <div class="value"><span id="hum">--.-</span><span class="unit">%RH</span></div>
+      <div class="sub" id="dew"></div></div>
+    <div class="card"><div class="label" id="pres-label">Pressure</div>
+      <div class="value"><span id="pres">----.-</span><span class="unit">hPa</span></div>
+      <div class="sub" id="pres-station"></div></div>
   </section>
 
   <div class="chart-head">
@@ -86,7 +89,7 @@
   <section class="charts">
     <div class="card chart"><div class="label">Temperature (°C)</div><svg id="chart-temp"></svg></div>
     <div class="card chart"><div class="label">Humidity (%RH)</div><svg id="chart-hum"></svg></div>
-    <div class="card chart"><div class="label">Pressure (hPa)</div><svg id="chart-pres"></svg></div>
+    <div class="card chart"><div class="label" id="pres-chart-label">Pressure (hPa)</div><svg id="chart-pres"></svg></div>
   </section>
 
   <footer>
@@ -96,6 +99,7 @@
       <span class="system" id="system"></span>
     </div>
     <div id="station"></div>
+    <div id="metar"></div>
   </footer>
 </main>
 
@@ -130,6 +134,9 @@ let currentTimer = null;
 // call has started is dropped, so only one polling loop ever runs.
 let currentGen = 0;
 let measurePeriod = 60;  // s, from /api/current
+// FR-11.2: the pressure is shown reduced to sea level (QNH). The station
+// sends its own (station) pressure in the chart data, with its altitude.
+let altitude = null;  // m, from /api/current and /api/charts
 // FR-8.7: cursor shared by the three charts. cursorT is the time under the
 // pointer (null: hidden); it is kept across redraws, so new measurements do
 // not hide it. scales holds the axes of each drawn chart (chart id -> scale).
@@ -144,6 +151,18 @@ function fmtDuration(s) {
   return s >= 3600 ? +(s / 3600).toFixed(1) + " h" : s >= 60 ? Math.round(s / 60) + " min" : s + " s";
 }
 
+// FR-11.2: factor of the ICAO standard atmosphere, as on the station.
+function mslFactor(alt) {
+  return Math.pow(1 - 2.25577e-5 * alt, -5.25588);
+}
+
+function showAltitude(alt) {
+  if (alt === altitude) return;
+  altitude = alt;
+  $("pres-label").textContent = alt ? "Pressure (sea level)" : "Pressure";
+  $("pres-chart-label").textContent = alt ? "Pressure, sea level (hPa)" : "Pressure (hPa)";
+}
+
 function setStatus(text, error) {
   $("status").textContent = text;
   $("status").classList.toggle("error", !!error);
@@ -156,6 +175,26 @@ function showStation(d) {
   document.title = label + " · Weather Station";
   $("station").textContent = (d.name ? d.name + " · " : "") + "device " + d.device_id +
     (d.sensor_id ? " · sensor " + d.sensor_id : "");
+  // FR-11.1: "calibrated" with the offsets as a tooltip.
+  const c = d.calibration;
+  if (c && (c.temperature_c || c.humidity_rh || c.pressure_hpa)) {
+    const sign = (x, n) => (x >= 0 ? "+" : "") + x.toFixed(n);
+    const tag = document.createElement("span");
+    tag.textContent = " · calibrated";
+    tag.title = "Offsets: temperature " + sign(c.temperature_c, 2) + " °C, humidity " +
+      sign(c.humidity_rh, 2) + " %RH, pressure " + sign(c.pressure_hpa, 1) + " hPa";
+    $("station").appendChild(tag);
+  }
+  // FR-11.4: difference to the QNH of the METAR airport.
+  const m = d.metar;
+  $("metar").textContent = !m ? "" : "METAR " + m.station + ": " +
+    (m.median_diff_hpa != null
+      ? (m.median_diff_hpa >= 0 ? "+" : "") + m.median_diff_hpa.toFixed(1) + " hPa (median of " + m.samples + ")"
+      : (m.diff_hpa >= 0 ? "+" : "") + m.diff_hpa.toFixed(1) + " hPa (" + m.samples + " samples, median from 24)");
+  if (m && m.median_diff_hpa != null) {
+    $("metar").title = "Station QNH minus airport QNH. To cancel it: cal set pressure " +
+      m.suggested_offset_hpa.toFixed(1) + ", or altitude " + m.suggested_altitude_m + " m";
+  }
 }
 
 // FR-8.2: current values, refreshed at the measurement interval. Each new
@@ -171,6 +210,7 @@ async function loadCurrent() {
     if (gen !== currentGen) return;
     measurePeriod = d.measure_period_s;
     showStation(d);
+    showAltitude(d.altitude_m);
     // FR-8.9: firmware and heap, for troubleshooting without the console.
     $("system").textContent = "firmware " + d.firmware + " · heap " + d.heap_free_kb + " KB free (min " +
       d.heap_min_kb + " KB, largest block " + d.heap_largest_kb + " KB)";
@@ -181,13 +221,17 @@ async function loadCurrent() {
     if (d.valid) {
       $("temp").textContent = d.temperature_c.toFixed(1);
       $("hum").textContent = d.humidity_rh.toFixed(1);
-      $("pres").textContent = d.pressure_hpa.toFixed(1);
+      $("pres").textContent = d.pressure_msl_hpa.toFixed(1);
+      // FR-11.2, FR-11.3: station pressure and dew point in small type.
+      $("pres-station").textContent = d.altitude_m ? "station " + d.pressure_hpa.toFixed(1) + " hPa" : "";
+      $("dew").textContent = d.dew_point_c != null ? "dew point " + d.dew_point_c.toFixed(1) + " °C" : "";
       const when = d.time ? fmtTime(d.time) : "clock not synchronized";
       setStatus("Measured " + when + wifi, false);
-      if (d.time) addPoint(d.time, [d.temperature_c, d.humidity_rh, d.pressure_hpa]);
+      if (d.time) addPoint(d.time, [d.temperature_c, d.humidity_rh, d.pressure_msl_hpa]);
     } else {
       $("temp").textContent = $("hum").textContent = "--.-";
       $("pres").textContent = "----.-";
+      $("pres-station").textContent = $("dew").textContent = "";
       setStatus("Sensor error" + wifi, true);
     }
   } catch (e) {
@@ -199,14 +243,17 @@ async function loadCurrent() {
 }
 
 // FR-8.4: chart data of one period, 60 to 96 points averaged by the station.
+// FR-11.2: the pressure is reduced to sea level here.
 function setChartData(d) {
   const step = d.source === "measurements" ? d.measure_period_s : d.log_period_s;
+  const f = mslFactor(d.altitude_m || 0);
+  showAltitude(d.altitude_m || 0);
   data[d.hours] = {
     loadedAt: Date.now(),
     logPeriod: d.log_period_s,
     bucket: d.bucket_s,
     gap: 3 * Math.max(d.bucket_s, step),  // longer pauses break the line
-    points: d.records.map((x) => ({ t: x[0], v: [x[1], x[2], x[3]], n: 0 })),
+    points: d.records.map((x) => ({ t: x[0], v: [x[1], x[2], x[3] * f], n: 0 })),
     lastAdded: d.records.length ? d.records[d.records.length - 1][0] : 0,
     info: !d.available ? "history not available"
       : d.bucket_s > step ? "each point is the average of " + fmtDuration(d.bucket_s)
