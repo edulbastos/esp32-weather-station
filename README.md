@@ -83,7 +83,7 @@ idf.py -p /dev/ttyUSB0 flash monitor
 The serial monitor runs at 115200 baud and prints the readings, for example:
 
 ```
-I (1234) weather: 2026-10-15 14:32:05  T=23.41 C  H=56.12 %RH  P=1012.84 hPa  Alt~3 m
+I (1234) weather: 2026-10-15 14:32:05  T=23.41 C  H=56.12 %RH  Td=14.16 C  P=930.12 hPa  QNH=1016.78 hPa
 ```
 
 The timestamp appears once the clock has been synchronized via NTP. The Wi-Fi credentials are stored only in the local `sdkconfig`, which is not committed. With no SSID configured, the station works normally without the date and time.
