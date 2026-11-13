@@ -142,6 +142,8 @@ The page has no password and is read-only; anyone on the local network can see i
 
 ## Measurement quality
 
+**Valid range.** A reading outside the operating range of the BME280 (−40 to 85 °C, 0 to 100 %RH, 300 to 1100 hPa) is impossible and comes from a disturbance on the I2C bus or a damaged chip. It is rejected like a failed read: the display keeps showing the previous reading, and nothing new is sent, stored or added to the charts; after 3 in a row the sensor is re-initialized and the display shows `SENSOR ERROR` until a valid reading arrives. Each rejected reading is logged with its raw values, and `sys` counts them (`rejected samples N`).
+
 **Altitude and sea-level pressure.** Weather services and airports report the pressure reduced to sea level (QNH); the pressure measured at 900 m is about 100 hPa lower. Set the altitude of the station in menuconfig ("Altitude of the station", in metres, including the floor it stands on): the display, the web page (main value and chart) and MQTT (`pressure_msl_hpa`) then show the sea-level pressure. Each 8 m of error in the altitude gives about 1 hPa of error; a topographic map or Google Earth is better than the GPS of a phone. The history and the CSV keep the pressure measured at the station.
 
 **Dew point.** Computed from the temperature and the humidity (Magnus formula), shown on the web page below the humidity and sent by MQTT (`dew_point_c`).
@@ -190,7 +192,7 @@ To save the CSV on the PC, press `Ctrl+T` then `Ctrl+L` in the monitor before `l
 
 To see how often Wi-Fi drops, `sys` and the `health:` line count the connections lost since start per disconnection reason, for example `Wi-Fi drops 3 (reason 6: 2, reason 200: 1), last 420 s ago`.
 
-In the serial monitor, `sys` shows the uptime, why the station last started, the free memory, the device and sensor identifiers and the firmware version, the calibration, the altitude, the METAR check, the Wi-Fi link (signal, IP, gateway), the network watchdog (last sign of traffic and where it came from), the MQTT state and how many web requests were served. Every 10 minutes the same figures appear in the log as a `health:` line.
+In the serial monitor, `sys` shows the uptime, why the station last started, the free memory, the device and sensor identifiers and the firmware version, the calibration, the samples rejected as out of range, the altitude, the METAR check, the Wi-Fi link (signal, IP, gateway), the network watchdog (last sign of traffic and where it came from), the MQTT state and how many web requests were served. Every 10 minutes the same figures appear in the log as a `health:` line.
 
 If Wi-Fi stays associated but no traffic gets through, the station notices it within about 3 minutes (every minute it looks for MQTT or web traffic, and pings the router only when there is none), reconnects Wi-Fi, and after two reconnections without success restarts itself. The history in flash is kept. After a restart, the first log lines show the reason (`health: Started by: software restart`).
 
@@ -205,7 +207,7 @@ All other tunable parameters live in [main/config.h](main/config.h):
 - I2C pins, frequency and port;
 - BME280 and SSD1306 addresses;
 - display size (128x64 or 128x32), contrast and yellow band;
-- calibration limits and the parameters of the METAR check;
+- valid range of the sensor readings, calibration limits and the parameters of the METAR check;
 - task periods, stack sizes and priorities;
 - NTP server, time zone (default UTC-3), Wi-Fi retry interval and signal icon thresholds;
 - MQTT topic prefix, QoS, retain flag and reconnect interval;
@@ -236,7 +238,7 @@ The `i2cMutex` mutex controls access to the I2C bus, and `dataMutex` protects th
 main/
 ├── main.cpp      # app_main, initialization and FreeRTOS tasks
 ├── config.h      # central configuration
-├── bme280.*      # BME280 driver (Bosch compensation formulas)
+├── bme280.*      # BME280 driver (Bosch compensation formulas, range check)
 ├── ssd1306.*     # SSD1306 driver with a local frame buffer
 ├── font5x7.h     # 5x7 font (ASCII + degree sign)
 ├── net_time.*    # Wi-Fi station + NTP time of day

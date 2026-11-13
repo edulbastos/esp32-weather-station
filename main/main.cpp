@@ -285,12 +285,19 @@ void taskMeasure(void *)
 
         if (xSemaphoreTake(s_i2c_mutex, mutex_timeout()) == pdTRUE) {
             err = s_sensor.read(sample);
-            // NFR-2.2: try to recover the sensor after repeated failures.
+            if (err == ESP_ERR_INVALID_RESPONSE) {
+                quality::count_rejected(0);  // FR-1.6
+            }
+            // NFR-2.2: try to recover the sensor after repeated failures; a
+            // re-initialization also reloads the trimming parameters (FR-1.6).
             if (err != ESP_OK && errors + 1 >= config::MAX_CONSECUTIVE_ERRORS) {
                 ESP_LOGW(TAG, "Re-initializing BME280");
                 if (s_sensor.init(s_bus, config::BME280_ADDR, config::I2C_FREQ_HZ) == ESP_OK) {
                     register_sensor();
                     err = s_sensor.read(sample);
+                    if (err == ESP_ERR_INVALID_RESPONSE) {
+                        quality::count_rejected(0);
+                    }
                 }
             }
             xSemaphoreGive(s_i2c_mutex);

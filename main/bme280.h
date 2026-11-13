@@ -19,7 +19,9 @@ public:
     // data and starts continuous (normal mode) measurements.
     esp_err_t init(i2c_master_bus_handle_t bus, uint8_t address, uint32_t scl_speed_hz);
 
-    // Reads and compensates the latest measurement.
+    // Reads and compensates the latest measurement. ESP_ERR_INVALID_RESPONSE
+    // when the sample is rejected: measurement skipped by the chip, or values
+    // outside its operating range (FR-1.6, limits in config.h).
     esp_err_t read(Bme280Data &out);
 
     // Releases the I2C device handle.

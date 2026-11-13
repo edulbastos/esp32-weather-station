@@ -57,8 +57,16 @@ constexpr uint32_t   BUTTON_DEBOUNCE_MS  = 250;
 constexpr uint32_t   DISPLAY_TIMEOUT_MS  = CONFIG_WS_DISPLAY_TIMEOUT_MIN * 60 * 1000;
 
 // ---------------------------------------------------------------------------
-// Measurement quality (FR-11.x)
+// Measurement quality (FR-1.6, FR-11.x)
 // ---------------------------------------------------------------------------
+// FR-1.6: operating range of the BME280 (datasheet), limits included; a
+// sample outside it is rejected as a failed read
+constexpr float SENSOR_MIN_TEMP_C   = -40.0f;   // degC
+constexpr float SENSOR_MAX_TEMP_C   = 85.0f;    // degC
+constexpr float SENSOR_MIN_HUM_RH   = 0.0f;     // %RH
+constexpr float SENSOR_MAX_HUM_RH   = 100.0f;   // %RH
+constexpr float SENSOR_MIN_PRESS_HPA = 300.0f;  // hPa
+constexpr float SENSOR_MAX_PRESS_HPA = 1100.0f; // hPa
 // FR-11.1: largest calibration offsets accepted by the `cal` command
 constexpr float CAL_MAX_TEMP_C    = 5.0f;   // degC
 constexpr float CAL_MAX_HUM_RH    = 10.0f;  // %RH

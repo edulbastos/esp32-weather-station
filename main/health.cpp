@@ -286,7 +286,8 @@ int cmd_sys(int, char **)
             identity::format_sensor_id(s.type, s.fingerprint, id, sizeof(id));
             char cal[96];
             quality::format_offsets(quality::offsets(i), cal, sizeof(cal));
-            printf("Sensor %u: %s at i2c@0x%02x, %s\n", static_cast<unsigned>(i), id, s.address, cal);
+            printf("Sensor %u: %s at i2c@0x%02x, %s, rejected samples %lu\n", static_cast<unsigned>(i), id,
+                   s.address, cal, static_cast<unsigned long>(quality::rejected(i)));  // FR-1.6
         }
     }
     // FR-11.2, FR-11.4

@@ -36,6 +36,11 @@ Offsets offsets(size_t index);
 // Adds the offsets to a reading; the humidity is clamped to 0..100 %RH.
 void apply(size_t index, Bme280Data &d);
 
+// FR-1.6: counts a sample of the sensor at `index` that the driver rejected
+// (out of range or skipped), and the count since start for `sys`.
+void count_rejected(size_t index);
+uint32_t rejected(size_t index);
+
 // Writes e.g. "temperature -1.25 °C, humidity +0.00 %RH, pressure +0.0 hPa".
 void format_offsets(const Offsets &o, char *buf, size_t len);
 

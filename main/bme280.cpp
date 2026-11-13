@@ -191,6 +191,20 @@ esp_err_t Bme280::read(Bme280Data &out)
     out.temperature_c = compensate_temperature(adc_t) / 100.0f;
     out.pressure_hpa  = compensate_pressure(adc_p) / 256.0f / 100.0f;
     out.humidity_rh   = compensate_humidity(adc_h) / 1024.0f;
+
+    // FR-1.6: a sample outside the operating range of the chip (a frame of
+    // 0xFF or 0x00 after a bus disturbance, corrupt trimming parameters) is
+    // a failed read. Written as "inside" so that a NaN is rejected too.
+    const bool in_range =
+        out.temperature_c >= config::SENSOR_MIN_TEMP_C && out.temperature_c <= config::SENSOR_MAX_TEMP_C &&
+        out.humidity_rh >= config::SENSOR_MIN_HUM_RH && out.humidity_rh <= config::SENSOR_MAX_HUM_RH &&
+        out.pressure_hpa >= config::SENSOR_MIN_PRESS_HPA && out.pressure_hpa <= config::SENSOR_MAX_PRESS_HPA;
+    if (!in_range) {
+        ESP_LOGW(TAG, "Sample out of range, rejected: T=%.2f C H=%.2f %%RH P=%.2f hPa (raw T=0x%05lx P=0x%05lx H=0x%04lx)",
+                 out.temperature_c, out.humidity_rh, out.pressure_hpa, static_cast<unsigned long>(adc_t),
+                 static_cast<unsigned long>(adc_p), static_cast<unsigned long>(adc_h));
+        return ESP_ERR_INVALID_RESPONSE;
+    }
     return ESP_OK;
 }
 

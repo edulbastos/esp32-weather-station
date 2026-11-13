@@ -1,6 +1,7 @@
 #include "quality.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -28,6 +29,9 @@ struct StoredCalibration {
 
 // Written by taskMeasure (bind) and the console, read by every task.
 portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
+
+// FR-1.6: samples rejected since start, per sensor position.
+std::atomic<uint32_t> s_rejected[identity::SENSOR_COUNT] = {};
 quality::Offsets s_offsets[identity::SENSOR_COUNT] = {};
 identity::Sensor s_bound[identity::SENSOR_COUNT] = {};
 bool s_is_bound[identity::SENSOR_COUNT] = {};
@@ -256,6 +260,18 @@ Offsets offsets(size_t index)
     const Offsets o = s_offsets[index];
     taskEXIT_CRITICAL(&s_mux);
     return o;
+}
+
+void count_rejected(size_t index)
+{
+    if (index < identity::SENSOR_COUNT) {
+        s_rejected[index]++;
+    }
+}
+
+uint32_t rejected(size_t index)
+{
+    return index < identity::SENSOR_COUNT ? s_rejected[index].load() : 0;
 }
 
 void apply(size_t index, Bme280Data &d)
