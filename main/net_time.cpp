@@ -16,6 +16,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/timers.h"
 #include "nvs_flash.h"
+#include "settings.h"
 
 static const char *TAG = "net_time";
 
@@ -170,8 +171,8 @@ esp_err_t start()
     setenv("TZ", config::TIMEZONE, 1);
     tzset();
 
-    if (config::WIFI_SSID[0] == '\0') {
-        ESP_LOGW(TAG, "Wi-Fi SSID not configured (idf.py menuconfig), time of day disabled");
+    if (settings::get().wifi_ssid[0] == '\0') {
+        ESP_LOGW(TAG, "Wi-Fi SSID not configured, time of day disabled");
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -201,10 +202,10 @@ esp_err_t start()
     }
 
     wifi_config_t wifi_cfg = {};
-    strlcpy(reinterpret_cast<char *>(wifi_cfg.sta.ssid), config::WIFI_SSID, sizeof(wifi_cfg.sta.ssid));
-    strlcpy(reinterpret_cast<char *>(wifi_cfg.sta.password), config::WIFI_PASSWORD,
+    strlcpy(reinterpret_cast<char *>(wifi_cfg.sta.ssid), settings::get().wifi_ssid, sizeof(wifi_cfg.sta.ssid));
+    strlcpy(reinterpret_cast<char *>(wifi_cfg.sta.password), settings::get().wifi_password,
             sizeof(wifi_cfg.sta.password));
-    wifi_cfg.sta.threshold.authmode = config::WIFI_PASSWORD[0] ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
+    wifi_cfg.sta.threshold.authmode = settings::get().wifi_password[0] ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
     // NFR-2.3: a mesh offers the same network from several nodes; scan all
     // channels and take the strongest instead of the first one found.
     wifi_cfg.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
@@ -235,7 +236,7 @@ esp_err_t start()
     sntp_cfg.sync_cb = on_time_sync;
     err = esp_netif_sntp_init(&sntp_cfg);
     if (err == ESP_OK) {
-        ESP_LOGI(TAG, "Connecting to Wi-Fi \"%s\", NTP server %s", config::WIFI_SSID, config::NTP_SERVER);
+        ESP_LOGI(TAG, "Connecting to Wi-Fi \"%s\", NTP server %s", settings::get().wifi_ssid, config::NTP_SERVER);
     }
     return err;
 }

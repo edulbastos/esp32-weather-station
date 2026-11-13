@@ -2,6 +2,8 @@
 
 #include <atomic>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include "config.h"
 #include "esp_console.h"
 #include "esp_heap_caps.h"
@@ -13,11 +15,16 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "identity.h"
+#include "lwip/etharp.h"
 #include "lwip/ip_addr.h"
+#include "lwip/netif.h"
+#include "lwip/tcpip.h"
 #include "metar.h"
 #include "net_time.h"
 #include "ping/ping_sock.h"
+#include "provisioning.h"
 #include "quality.h"
+#include "settings.h"
 #include "telemetry.h"
 #include "web_server.h"
 
@@ -232,6 +239,169 @@ const char *reset_reason_text(esp_reset_reason_t r)
     }
 }
 
+// --- NFR-2.5: `ping` and `arp` console commands -----------------------------
+
+void on_diag_ping_success(esp_ping_handle_t ping, void *)
+{
+    uint16_t seq = 0;
+    uint8_t ttl = 0;
+    uint32_t elapsed = 0, size = 0;
+    ip_addr_t from;
+    esp_ping_get_profile(ping, ESP_PING_PROF_SEQNO, &seq, sizeof(seq));
+    esp_ping_get_profile(ping, ESP_PING_PROF_TTL, &ttl, sizeof(ttl));
+    esp_ping_get_profile(ping, ESP_PING_PROF_TIMEGAP, &elapsed, sizeof(elapsed));
+    esp_ping_get_profile(ping, ESP_PING_PROF_SIZE, &size, sizeof(size));
+    esp_ping_get_profile(ping, ESP_PING_PROF_IPADDR, &from, sizeof(from));
+    printf("%lu bytes from %s: seq=%u ttl=%u time=%lu ms\n", static_cast<unsigned long>(size), ipaddr_ntoa(&from),
+           seq, ttl, static_cast<unsigned long>(elapsed));
+}
+
+void on_diag_ping_timeout(esp_ping_handle_t ping, void *)
+{
+    uint16_t seq = 0;
+    esp_ping_get_profile(ping, ESP_PING_PROF_SEQNO, &seq, sizeof(seq));
+    printf("seq=%u: no reply\n", seq);
+}
+
+// `ping <ip> [count [size]]`: pings any address from the station, to see
+// whether the path from the station to a device works (NFR-2.5).
+int cmd_ping(int argc, char **argv)
+{
+    ip_addr_t target = {};
+    if (argc < 2 || !ipaddr_aton(argv[1], &target) || !IP_IS_V4(&target)) {
+        printf("Usage: ping <IPv4 address> [count (1..%lu)] [size (0..%lu bytes)]\n",
+               static_cast<unsigned long>(config::DIAG_PING_MAX_COUNT),
+               static_cast<unsigned long>(config::DIAG_PING_MAX_SIZE));
+        return 1;
+    }
+    const long count = argc >= 3 ? strtol(argv[2], nullptr, 10) : config::DIAG_PING_COUNT;
+    const long size = argc >= 4 ? strtol(argv[3], nullptr, 10) : config::DIAG_PING_SIZE;
+    if (count < 1 || count > static_cast<long>(config::DIAG_PING_MAX_COUNT) || size < 0 ||
+        size > static_cast<long>(config::DIAG_PING_MAX_SIZE)) {
+        printf("Count 1..%lu, size 0..%lu bytes\n", static_cast<unsigned long>(config::DIAG_PING_MAX_COUNT),
+               static_cast<unsigned long>(config::DIAG_PING_MAX_SIZE));
+        return 1;
+    }
+
+    esp_ping_config_t cfg = ESP_PING_DEFAULT_CONFIG();
+    cfg.target_addr = target;
+    cfg.count = count;
+    cfg.data_size = size;
+    cfg.interval_ms = config::DIAG_PING_INTERVAL_MS;
+    cfg.timeout_ms = config::DIAG_PING_TIMEOUT_MS;
+    cfg.task_stack_size = config::DIAG_PING_TASK_STACK;
+    esp_ping_callbacks_t cbs = {};
+    cbs.cb_args = xTaskGetCurrentTaskHandle();
+    cbs.on_ping_success = on_diag_ping_success;
+    cbs.on_ping_timeout = on_diag_ping_timeout;
+    cbs.on_ping_end = on_ping_end;
+
+    esp_ping_handle_t ping = nullptr;
+    if (esp_ping_new_session(&cfg, &cbs, &ping) != ESP_OK) {
+        printf("Ping not possible (no network?)\n");
+        return 1;
+    }
+    printf("PING %s, %ld bytes, %ld times\n", argv[1], size, count);
+    ulTaskNotifyTake(pdTRUE, 0);  // drop a stale notification
+    if (esp_ping_start(ping) == ESP_OK) {
+        const TickType_t max_wait =
+            pdMS_TO_TICKS(count * (config::DIAG_PING_INTERVAL_MS + config::DIAG_PING_TIMEOUT_MS) + 1000);
+        if (ulTaskNotifyTake(pdTRUE, max_wait) == 0) {
+            esp_ping_stop(ping);
+        }
+        uint32_t sent = 0, received = 0;
+        esp_ping_get_profile(ping, ESP_PING_PROF_REQUEST, &sent, sizeof(sent));
+        esp_ping_get_profile(ping, ESP_PING_PROF_REPLY, &received, sizeof(received));
+        printf("%lu sent, %lu received, %lu %% lost\n", static_cast<unsigned long>(sent),
+               static_cast<unsigned long>(received),
+               static_cast<unsigned long>(sent ? (sent - received) * 100 / sent : 0));
+    }
+    esp_ping_delete_session(ping);
+    return 0;
+}
+
+// The ARP table is read and cleared in the lwIP thread (no core locking).
+struct ArpDump {
+    struct Entry {
+        ip4_addr_t ip;
+        uint8_t mac[6];
+        char netif[4];
+    } entries[ARP_TABLE_SIZE];
+    size_t count;
+    bool clear;
+    SemaphoreHandle_t done;
+};
+
+void arp_in_tcpip_thread(void *arg)
+{
+    auto *dump = static_cast<ArpDump *>(arg);
+    if (dump->clear) {
+        struct netif *nif;
+        NETIF_FOREACH(nif) {
+            etharp_cleanup_netif(nif);
+        }
+    }
+    dump->count = 0;
+    for (size_t i = 0; i < ARP_TABLE_SIZE; i++) {
+        ip4_addr_t *ip = nullptr;
+        struct netif *nif = nullptr;
+        struct eth_addr *eth = nullptr;
+        if (etharp_get_entry(i, &ip, &nif, &eth) == 1) {
+            ArpDump::Entry &e = dump->entries[dump->count++];
+            e.ip = *ip;
+            memcpy(e.mac, eth->addr, sizeof(e.mac));
+            snprintf(e.netif, sizeof(e.netif), "%c%c", nif->name[0], nif->name[1]);
+        }
+    }
+    xSemaphoreGive(dump->done);
+}
+
+// `arp` lists the station's ARP table; `arp clear` empties it first. A device
+// appears there when its ARP request for the station arrived (or after the
+// station talked to it), so this shows whether a device's packets get here.
+int cmd_arp(int argc, char **argv)
+{
+    const bool clear = argc >= 2 && strcmp(argv[1], "clear") == 0;
+    if (argc >= 2 && !clear) {
+        printf("Usage: arp | arp clear\n");
+        return 1;
+    }
+    auto *dump = static_cast<ArpDump *>(calloc(1, sizeof(ArpDump)));
+    SemaphoreHandle_t done = xSemaphoreCreateBinary();
+    if (dump == nullptr || done == nullptr) {
+        free(dump);
+        if (done != nullptr) {
+            vSemaphoreDelete(done);
+        }
+        printf("Out of memory\n");
+        return 1;
+    }
+    dump->clear = clear;
+    dump->done = done;
+    if (tcpip_callback(arp_in_tcpip_thread, dump) != ERR_OK) {
+        printf("Network stack not running\n");
+        vSemaphoreDelete(done);
+        free(dump);
+        return 1;
+    }
+    xSemaphoreTake(done, portMAX_DELAY);  // the lwIP thread always answers
+    if (clear) {
+        printf("ARP table cleared\n");
+    }
+    printf("%-16s %-18s %s\n", "IP address", "MAC address", "interface");
+    for (size_t i = 0; i < dump->count; i++) {
+        const ArpDump::Entry &e = dump->entries[i];
+        printf("%-16s %02x:%02x:%02x:%02x:%02x:%02x  %s\n", ip4addr_ntoa(&e.ip), e.mac[0], e.mac[1], e.mac[2],
+               e.mac[3], e.mac[4], e.mac[5], e.netif);
+    }
+    if (dump->count == 0) {
+        printf("(empty)\n");
+    }
+    vSemaphoreDelete(done);
+    free(dump);
+    return 0;
+}
+
 // NFR-2.3: `sys` prints the state needed to diagnose a stuck network.
 int cmd_sys(int, char **)
 {
@@ -243,7 +413,9 @@ int cmd_sys(int, char **)
     printf("Heap: free %u KB, minimum since start %u KB, largest block %u KB\n", h.free_kb, h.min_kb,
            h.largest_kb);
 
-    if (!s_wifi_enabled) {
+    if (provisioning::active()) {
+        provisioning::print_status();  // FR-12.3
+    } else if (!s_wifi_enabled) {
         printf("Wi-Fi: not configured\n");
     } else {
         wifi_ap_record_t ap;
@@ -276,7 +448,8 @@ int cmd_sys(int, char **)
         }
         printf(", failed checks %d, forced reconnects %d\n", s_failed_checks.load(), s_forced_reconnects.load());
     }
-    // FR-10.1 .. FR-10.3
+    // FR-10.1 .. FR-10.3, FR-12.1
+    printf("Settings: %s (`setup show`)\n", settings::source_name());
     printf("Device: %s%s%s%s, firmware %s\n", identity::device_id(), identity::device_name()[0] ? " (\"" : "",
            identity::device_name(), identity::device_name()[0] ? "\")" : "", identity::firmware_version());
     for (size_t i = 0; i < identity::SENSOR_COUNT; i++) {
@@ -321,9 +494,29 @@ esp_err_t register_console_command()
     esp_console_cmd_t cmd = {};
     cmd.command = "sys";
     cmd.help = "System health: uptime, last start reason, heap, Wi-Fi, gateway ping, device, sensor and "
-               "calibration, altitude, METAR check, MQTT, web";
+               "calibration, altitude, METAR check, MQTT, web, settings source, setup mode";
     cmd.func = cmd_sys;
-    return esp_console_cmd_register(&cmd);
+    esp_err_t err = esp_console_cmd_register(&cmd);
+
+    // NFR-2.5
+    if (err == ESP_OK) {
+        esp_console_cmd_t ping = {};
+        ping.command = "ping";
+        ping.help = "Pings an address from the station: 'ping <ip> [count] [size]', e.g. 'ping 192.168.0.106 10 1400'";
+        ping.hint = "<ip> [count] [size]";
+        ping.func = cmd_ping;
+        err = esp_console_cmd_register(&ping);
+    }
+    if (err == ESP_OK) {
+        esp_console_cmd_t arp = {};
+        arp.command = "arp";
+        arp.help = "ARP table of the station: 'arp' lists it, 'arp clear' empties it (a device that then reaches "
+                   "the station appears again)";
+        arp.hint = "[clear]";
+        arp.func = cmd_arp;
+        err = esp_console_cmd_register(&arp);
+    }
+    return err;
 }
 
 void log_reset_reason()

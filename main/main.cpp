@@ -13,7 +13,9 @@
 // The BOOT button and the `display` console command switch the OLED on and
 // off; it also switches off after a period without interaction (FR-9.x).
 // A web server (web_server) shows the current values and the history on the
-// local network.
+// local network. Holding BOOT for 5 s, the `setup` console command, or a
+// station without a Wi-Fi network start setup mode (provisioning, FR-12.x)
+// instead of the network: an access point with a setup page for the settings.
 // i2cMutex serializes access to the shared I2C bus, dataMutex protects the
 // latest measurement shared between the tasks.
 // Wi-Fi and NTP (net_time) run in the background and provide the time of day;
@@ -35,12 +37,15 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "freertos/timers.h"
 #include "health.h"
 #include "history.h"
 #include "identity.h"
 #include "metar.h"
 #include "net_time.h"
+#include "provisioning.h"
 #include "quality.h"
+#include "settings.h"
 #include "ssd1306.h"
 #include "telemetry.h"
 #include "web_server.h"
@@ -71,6 +76,7 @@ TaskHandle_t s_display_task = nullptr;     // woken by taskMeasure on new data
 enum DisplayRequest : int { REQ_NONE, REQ_ON, REQ_OFF, REQ_TOGGLE };
 std::atomic<int> s_display_request{REQ_NONE};
 std::atomic<bool> s_display_on{true};  // current state, for `display status`
+TimerHandle_t s_hold_timer = nullptr;    // FR-12.2: BOOT held for SETUP_HOLD_MS
 
 constexpr TickType_t mutex_timeout() { return pdMS_TO_TICKS(config::MUTEX_TIMEOUT_MS); }
 
@@ -273,6 +279,20 @@ void render_screen(const SharedData &data, bool measure_icon)
     draw_value_row(FIRST_ROW_Y + 2 * ROW_PITCH, "PRES", press, "hPa", SCALE);
 }
 
+// FR-12.3: in setup mode the display shows how to reach the setup page.
+void render_setup_screen()
+{
+    constexpr int HEADER_H = config::DISPLAY_YELLOW_ROWS > 0 ? config::DISPLAY_YELLOW_ROWS : 12;
+    char lines[provisioning::SCREEN_LINES][provisioning::SCREEN_CHARS];
+    provisioning::screen(lines);
+    s_display.clear();
+    s_display.draw_string((Ssd1306::WIDTH - Ssd1306::text_width("SETUP")) / 2, (HEADER_H - 7) / 2, "SETUP");
+    const int pitch = (Ssd1306::HEIGHT - HEADER_H) / static_cast<int>(provisioning::SCREEN_LINES);
+    for (size_t i = 0; i < provisioning::SCREEN_LINES; i++) {
+        s_display.draw_string(0, HEADER_H + static_cast<int>(i) * pitch + (pitch - 7) / 2, lines[i]);
+    }
+}
+
 void taskMeasure(void *)
 {
     int errors = 0;
@@ -369,23 +389,36 @@ void request_display(DisplayRequest req)
 }
 
 // FR-9.1: BOOT button (active low). Presses closer than BUTTON_DEBOUNCE_MS
-// to the previous one are contact bounce and ignored.
+// to the previous one are contact bounce and ignored. FR-12.2: every press
+// (bounces too) restarts the hold timer, which checks the button when it ends.
 void on_button(void *)
 {
+    BaseType_t woken = pdFALSE;
+    xTimerResetFromISR(s_hold_timer, &woken);
     static TickType_t last_press = 0;
     const TickType_t now = xTaskGetTickCountFromISR();
-    if (now - last_press < pdMS_TO_TICKS(config::BUTTON_DEBOUNCE_MS)) {
-        return;
+    if (now - last_press >= pdMS_TO_TICKS(config::BUTTON_DEBOUNCE_MS)) {
+        last_press = now;
+        s_display_request = REQ_TOGGLE;
+        vTaskNotifyGiveFromISR(s_display_task, &woken);
     }
-    last_press = now;
-    s_display_request = REQ_TOGGLE;
-    BaseType_t woken = pdFALSE;
-    vTaskNotifyGiveFromISR(s_display_task, &woken);
     portYIELD_FROM_ISR(woken);
+}
+
+// FR-12.2: still pressed SETUP_HOLD_MS after the last press: a long press.
+void on_hold_timer(TimerHandle_t)
+{
+    if (gpio_get_level(config::BUTTON_PIN) == 0) {
+        provisioning::on_long_press();
+    }
 }
 
 esp_err_t init_button()
 {
+    s_hold_timer = xTimerCreate("bootHold", pdMS_TO_TICKS(config::SETUP_HOLD_MS), pdFALSE, nullptr, on_hold_timer);
+    if (s_hold_timer == nullptr) {
+        return ESP_ERR_NO_MEM;
+    }
     gpio_config_t io_cfg = {};
     io_cfg.pin_bit_mask = 1ULL << config::BUTTON_PIN;
     io_cfg.mode = GPIO_MODE_INPUT;
@@ -432,7 +465,13 @@ void taskDisplay(void *)
         const int req = s_display_request.exchange(REQ_NONE);
         bool want_on = on;
         const char *reason = "inactivity";
-        if (req != REQ_NONE) {
+        const bool setup = provisioning::active();
+        if (setup) {
+            // FR-12.3: the setup screen stays on; FR-9.2 does not apply.
+            want_on = true;
+            reason = "setup mode";
+            last_activity = now;
+        } else if (req != REQ_NONE) {
             last_activity = now;
             want_on = req == REQ_TOGGLE ? !on : req == REQ_ON;
             reason = request_source(req);
@@ -464,7 +503,14 @@ void taskDisplay(void *)
         const bool turning_on = !on;
 
         // Rendering only touches the local frame buffer, no bus access needed.
-        render_screen(snapshot, measure_icon);
+        const auto render = [&] {
+            if (setup) {
+                render_setup_screen();
+            } else {
+                render_screen(snapshot, measure_icon);
+            }
+        };
+        render();
 
         esp_err_t err = ESP_ERR_TIMEOUT;
         if (xSemaphoreTake(s_i2c_mutex, mutex_timeout()) == pdTRUE) {
@@ -473,7 +519,7 @@ void taskDisplay(void *)
             if (err != ESP_OK && errors + 1 >= config::MAX_CONSECUTIVE_ERRORS) {
                 ESP_LOGW(TAG, "Re-initializing SSD1306");
                 if (s_display.init(s_bus, config::SSD1306_ADDR, config::I2C_FREQ_HZ) == ESP_OK) {
-                    render_screen(snapshot, measure_icon);  // init() cleared the frame buffer
+                    render();  // init() cleared the frame buffer
                     err = s_display.flush();
                 }
             }
@@ -492,7 +538,7 @@ void taskDisplay(void *)
                 on = true;
                 s_display_on = true;
                 ESP_LOGI(TAG, "Display on (%s)", reason);
-            } else if (req != REQ_NONE) {
+            } else if (req != REQ_NONE && !setup) {
                 s_display_request = req;  // try again on the next cycle
             }
         }
@@ -675,6 +721,9 @@ esp_err_t start_console(bool with_history)
     if (err == ESP_OK) {
         err = quality::register_console_command();
     }
+    if (err == ESP_OK) {
+        err = provisioning::register_console_command();
+    }
     if (err == ESP_OK && with_history) {
         err = history::register_console_command();
     }
@@ -694,6 +743,9 @@ extern "C" void app_main(void)
     if (identity::init() != ESP_OK) {
         ESP_LOGW(TAG, "MAC address unreadable, device identifier unavailable");
     }
+    // FR-12.1: the per-installation settings (stored, or menuconfig).
+    settings::init();
+    identity::set_name(settings::get().name);
     init_status_led();
 
     esp_err_t err = init_i2c_bus();
@@ -743,8 +795,16 @@ extern "C" void app_main(void)
         ESP_LOGW(TAG, "BOOT button unavailable: %s", esp_err_to_name(err));
     }
 
+    // FR-12.2: setup mode replaces the station's network (Wi-Fi, NTP, MQTT,
+    // web page, METAR, network watchdog); measuring, display and history run.
+    const char *setup_cause = nullptr;
+    const bool setup = provisioning::wanted_at_start(&setup_cause);
+    if (setup && (err = provisioning::start(setup_cause)) != ESP_OK) {
+        ESP_LOGW(TAG, "Setup mode unavailable: %s", esp_err_to_name(err));
+    }
+
     // FR-5.5: Wi-Fi/NTP problems are not critical, the station keeps running.
-    err = net_time::start();
+    err = setup ? ESP_ERR_INVALID_STATE : net_time::start();
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
         ESP_LOGW(TAG, "Time of day unavailable: %s", esp_err_to_name(err));
     }
@@ -777,11 +837,10 @@ extern "C" void app_main(void)
         const esp_err_t metar_err = metar::start();
         if (metar_err != ESP_OK && metar_err != ESP_ERR_INVALID_STATE && metar_err != ESP_ERR_INVALID_ARG) {
             ESP_LOGW(TAG, "METAR check unavailable: %s", esp_err_to_name(metar_err));
-        }    } else if (config::MQTT_BROKER_URI[0] != '\0') {
-        ESP_LOGW(TAG, "MQTT broker configured but Wi-Fi is not, data transmission disabled");
+        }
     }
-    if (config::ALTITUDE_M != 0) {
-        ESP_LOGI(TAG, "Altitude %d m, sea-level pressure factor %.4f", config::ALTITUDE_M, quality::msl_factor());
+    if (quality::altitude_m() != 0) {
+        ESP_LOGI(TAG, "Altitude %d m, sea-level pressure factor %.4f", quality::altitude_m(), quality::msl_factor());
     }
 
     // FR-7.6: the history is not critical either; without it the station runs on.

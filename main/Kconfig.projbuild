@@ -1,5 +1,7 @@
 menu "Weather Station"
 
+    comment "Station name, altitude, METAR airport, Wi-Fi and MQTT broker below are factory defaults: the setup page (hold BOOT for 5 s) stores its own, which replace them (FR-12.1)"
+
     config WS_DEVICE_NAME
         string "Station name"
         default ""

@@ -11,7 +11,7 @@ namespace health {
 // health log runs.
 esp_err_t start(bool wifi_enabled);
 
-// Registers the console command `sys`.
+// Registers the console commands `sys`, `ping` and `arp` (NFR-2.5).
 esp_err_t register_console_command();
 
 // Logs why the chip started (power-on, software restart, watchdog, ...).

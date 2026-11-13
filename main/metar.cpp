@@ -21,11 +21,15 @@
 #include "identity.h"
 #include "net_time.h"
 #include "quality.h"
+#include "settings.h"
 #include "telemetry.h"
 
 static const char *TAG = "metar";
 
 namespace {
+
+// FR-12.1: the airport of the active settings, fixed after start.
+const char *airport() { return settings::get().metar; }
 
 bool s_enabled = false;
 SemaphoreHandle_t s_lock = nullptr;
@@ -100,7 +104,7 @@ esp_err_t on_http_event(esp_http_client_event_t *evt)
 bool fetch(char *buf, int &status)
 {
     char url[128];
-    snprintf(url, sizeof(url), config::METAR_URL_FORMAT, config::METAR_STATION);
+    snprintf(url, sizeof(url), config::METAR_URL_FORMAT, airport());
     char user_agent[48];
     snprintf(user_agent, sizeof(user_agent), "%s/%s", config::METAR_USER_AGENT, identity::firmware_version());
     Answer answer = {buf, 0, false};
@@ -131,7 +135,7 @@ bool fetch(char *buf, int &status)
     if (status == 204) {
         // The API has no recent observation of this airport.
         set_result("no recent observation (HTTP 204)");
-        ESP_LOGI(TAG, "No recent METAR of %s", config::METAR_STATION);
+        ESP_LOGI(TAG, "No recent METAR of %s", airport());
         return false;
     }
     if (status != 200) {
@@ -291,10 +295,10 @@ void add_sample(time_t obs_time, float ref_hpa, float station_hpa)
 
     if (has_median) {
         ESP_LOGI(TAG, "%s: reference QNH %.1f hPa, station %.1f hPa, difference %+.1f hPa, median %+.1f hPa of %u",
-                 config::METAR_STATION, ref_hpa, qnh, diff, median, static_cast<unsigned>(s_count));
+                 airport(), ref_hpa, qnh, diff, median, static_cast<unsigned>(s_count));
     } else {
         ESP_LOGI(TAG, "%s: reference QNH %.1f hPa, station %.1f hPa, difference %+.1f hPa (%u of %u samples)",
-                 config::METAR_STATION, ref_hpa, qnh, diff, static_cast<unsigned>(s_count),
+                 airport(), ref_hpa, qnh, diff, static_cast<unsigned>(s_count),
                  static_cast<unsigned>(config::METAR_MIN_SAMPLES));
     }
 
@@ -303,7 +307,7 @@ void add_sample(time_t obs_time, float ref_hpa, float station_hpa)
     if (off && !s_warned) {
         ESP_LOGW(TAG, "Sea-level pressure differs from %s by %+.1f hPa (median of %u): set "
                       "`cal set pressure %.1f` or the altitude to %d m (now %d m)",
-                 config::METAR_STATION, median, static_cast<unsigned>(s_count), offset_hpa, altitude,
+                 airport(), median, static_cast<unsigned>(s_count), offset_hpa, altitude,
                  quality::altitude_m());
     }
     s_warned = off;
@@ -343,7 +347,7 @@ Outcome attempt()
     if (!number_of(buf.get(), "obsTime", obs) || !number_of(buf.get(), "altim", altim) ||
         !string_of(buf.get(), "icaoId", station, sizeof(station))) {
         set_result("no usable observation");
-        ESP_LOGW(TAG, "METAR of %s: no usable observation in the answer", config::METAR_STATION);
+        ESP_LOGW(TAG, "METAR of %s: no usable observation in the answer", airport());
         return Outcome::FAILED;
     }
     string_of(buf.get(), "rawOb", raw, sizeof(raw));  // may be cut; the Q group comes early
@@ -428,11 +432,11 @@ namespace metar {
 
 esp_err_t start()
 {
-    if (config::METAR_STATION[0] == '\0') {
+    if (airport()[0] == '\0') {
         return ESP_ERR_INVALID_STATE;
     }
-    if (!valid_code(config::METAR_STATION)) {
-        ESP_LOGW(TAG, "METAR airport \"%s\" is not an ICAO code, pressure check disabled", config::METAR_STATION);
+    if (!valid_code(airport())) {
+        ESP_LOGW(TAG, "METAR airport \"%s\" is not an ICAO code, pressure check disabled", airport());
         return ESP_ERR_INVALID_ARG;
     }
     s_lock = xSemaphoreCreateMutex();
@@ -442,7 +446,7 @@ esp_err_t start()
         return ESP_ERR_NO_MEM;
     }
     s_enabled = true;
-    ESP_LOGI(TAG, "Pressure check against the METAR of %s every hour at minute %lu", config::METAR_STATION,
+    ESP_LOGI(TAG, "Pressure check against the METAR of %s every hour at minute %lu", airport(),
              static_cast<unsigned long>(config::METAR_FETCH_MINUTE));
     return ESP_OK;
 }
@@ -471,7 +475,7 @@ int json(char *buf, size_t len)
     return snprintf(buf, len,
                     "{\"station\":\"%s\",\"obs_time\":%lld,\"qnh_ref_hpa\":%.1f,\"qnh_hpa\":%.1f,\"diff_hpa\":%.1f,"
                     "\"median_diff_hpa\":%s,\"samples\":%u,\"suggested_offset_hpa\":%s,\"suggested_altitude_m\":%s}",
-                    config::METAR_STATION, static_cast<long long>(st.obs_time), st.ref_hpa, st.qnh_hpa, st.diff_hpa,
+                    airport(), static_cast<long long>(st.obs_time), st.ref_hpa, st.qnh_hpa, st.diff_hpa,
                     median, static_cast<unsigned>(st.samples), offset, altitude);
 }
 
@@ -486,7 +490,7 @@ void print_status()
         Lock lock;
         st = s_state;
     }
-    printf("METAR check: %s, last request: %s\n", config::METAR_STATION, st.result);
+    printf("METAR check: %s, last request: %s\n", airport(), st.result);
     if (!st.has_sample) {
         return;
     }

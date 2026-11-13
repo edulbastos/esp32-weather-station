@@ -10,7 +10,7 @@
 
 namespace metar {
 
-// Starts taskMetar when an airport is configured (CONFIG_WS_METAR_STATION).
+// Starts taskMetar when the settings name an airport (FR-12.1).
 // Call after net_time::start() succeeded. Returns ESP_ERR_INVALID_STATE if
 // no airport is configured.
 esp_err_t start();

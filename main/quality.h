@@ -47,7 +47,7 @@ void format_offsets(const Offsets &o, char *buf, size_t len);
 // Registers the console command `cal`.
 esp_err_t register_console_command();
 
-// FR-11.2: altitude of the station (CONFIG_WS_ALTITUDE_M) and the factor
+// FR-11.2: altitude of the station (settings, FR-12.1) and the factor
 // that reduces the station pressure to sea level (ICAO standard atmosphere).
 int altitude_m();
 float msl_factor();

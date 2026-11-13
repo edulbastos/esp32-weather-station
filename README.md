@@ -27,11 +27,24 @@ The dot at the left lights up for 0.5 s each time a new measurement arrives. The
 
 ## Display on/off (energy saving)
 
-The **BOOT** button of the board switches the display off and on. The display also switches off by itself after 5 minutes without a button press; pressing the button wakes it up. The time is set in `idf.py menuconfig` ("Display switch-off after inactivity", 0 = never). While the display is off, the station keeps measuring, logging and publishing.
+The **BOOT** button of the board switches the display off and on (holding it for 5 s opens [setup mode](#setup-from-a-phone) instead). The display also switches off by itself after 5 minutes without a button press; pressing the button wakes it up. The time is set in `idf.py menuconfig` ("Display switch-off after inactivity", 0 = never). While the display is off, the station keeps measuring, logging and publishing.
 
 In the serial monitor: `display on`, `display off`, `display status`.
 
 The red **PWR** LED is wired straight to the 3.3 V supply and cannot be switched off by the firmware.
+
+## Setup from a phone
+
+The Wi-Fi network, the MQTT broker, the station name, the altitude and the METAR airport can be set without a computer:
+
+1. **Hold the BOOT button for 5 seconds.** The station restarts in setup mode; a new station without a Wi-Fi network starts in it by itself. The display shows `SETUP`, the name of the station's own Wi-Fi network (`ws-setup-` plus 4 hex digits) and its password, which is new every time.
+2. **Join that network with the phone.** Most phones then open the setup page by themselves; otherwise open `http://192.168.4.1/`. If the phone warns that the network has no internet, stay connected.
+3. **Pick your Wi-Fi network** from the list (or type a hidden one), enter its password and the other settings, and tap **Test and save**. Fields you leave as they are keep their values; an empty password field keeps the stored password.
+4. The station first joins your network to test it. If the password is wrong or the network is not found, the page says so and **nothing is stored**. Otherwise it also tries the MQTT broker, stores the settings (even when the broker cannot be reached right now), shows the address of its web page and restarts. Reconnect the phone to your usual network.
+
+Setup mode ends without changes after another 5-second press of BOOT, with `setup cancel`, or after 15 minutes without a phone connected (a station without a Wi-Fi network stays in it). Measuring and the display continue while it runs; MQTT and the web page are off.
+
+On the serial console: `setup` (enter setup mode), `setup cancel`, `setup show` (the settings, passwords masked) and `setup clear` (erase the stored settings; the menuconfig values apply again). The stored settings replace all the menuconfig values of the list above; `sys` shows which are in use (`Settings: stored` or `menuconfig`). They are kept in NVS without encryption, so anyone who can read the board's flash can read them.
 
 ## Hardware
 
@@ -67,10 +80,10 @@ source ~/.espressif/tools/activate_idf_v6.1.sh
 
 # 2. Set the target (first time only)
 idf.py set-target esp32
-# 3. Set the Wi-Fi credentials and, optionally, the station name, the altitude,
-#    the METAR airport, the measurement interval, the MQTT broker and the
-#    history interval (first time only):
-#    "Weather Station" menu
+# 3. Optionally set the Wi-Fi credentials, the station name, the altitude, the
+#    METAR airport and the MQTT broker as factory defaults (they can also be set
+#    later from a phone, see "Setup from a phone"), and the measurement and
+#    history intervals (first time only): "Weather Station" menu
 idf.py menuconfig
 
 # 4. Build
@@ -86,7 +99,7 @@ The serial monitor runs at 115200 baud and prints the readings, for example:
 I (1234) weather: 2026-10-15 14:32:05  T=23.41 C  H=56.12 %RH  Td=14.16 C  P=930.12 hPa  QNH=1016.78 hPa
 ```
 
-The timestamp appears once the clock has been synchronized via NTP. The Wi-Fi credentials are stored only in the local `sdkconfig`, which is not committed. With no SSID configured, the station works normally without the date and time.
+The timestamp appears once the clock has been synchronized via NTP. Wi-Fi credentials set in menuconfig are stored only in the local `sdkconfig`, which is not committed. With no SSID configured, the station starts in setup mode (see [Setup from a phone](#setup-from-a-phone)) and keeps measuring.
 
 > **VS Code with the ESP-IDF extension:** turn off the setting `idf.enableUpdateSrcsToCMakeListsFile`. When it is on, the extension inserts every new `.c`/`.cpp` file into the nearest `CMakeLists.txt`, including the files of the downloaded MQTT component, and the build fails.
 
@@ -96,13 +109,13 @@ Every station and every sensor has an identifier, so a management system can tel
 
 - **Device:** `ws-` followed by the board's MAC address, for example `ws-a0b76551a842`. It never changes, not even after reflashing.
 - **Sensor:** the type followed by a checksum of the chip's factory calibration data, for example `bme280-3fa91c07`. The BME280 has no serial number, but its calibration data differ from chip to chip, so a replaced sensor gets a new identifier; the station notices the replacement and logs it (`Sensor at position 0 (i2c@0x76) replaced: ...`).
-- **Name (optional):** a free-text name such as "Varanda", set in menuconfig ("Station name"). It is shown on the web page and in `sys`, but never used as a key.
+- **Name (optional):** a free-text name such as "Varanda", set on the setup page or in menuconfig ("Station name"). It is shown on the web page and in `sys`, but never used as a key.
 
 The identifiers appear in the boot log, in `sys`, on the web page, in every MQTT message and in every line of the history CSV.
 
 ## Sending data via MQTT
 
-With a broker URI set in menuconfig (for example `mqtt://192.168.1.10:1883`), the station publishes the latest reading every 60 s (configurable) to its own topic `weather-station/<device_id>/data`, as JSON with QoS 1 (the broker confirms each message; unconfirmed ones are sent again after a reconnection) and the retain flag:
+With a broker URI set on the setup page or in menuconfig (for example `mqtt://192.168.1.10:1883`), the station publishes the latest reading every 60 s (configurable) to its own topic `weather-station/<device_id>/data`, as JSON with QoS 1 (the broker confirms each message; unconfirmed ones are sent again after a reconnection) and the retain flag:
 
 ```json
 {"device_id":"ws-a0b76551a842","sensor_id":"bme280-3fa91c07","time":1792161125,"temperature_c":23.41,"humidity_rh":56.12,"pressure_hpa":930.12,"pressure_msl_hpa":1016.78,"dew_point_c":14.16,"rssi_dbm":-67}
@@ -144,7 +157,7 @@ The page has no password and is read-only; anyone on the local network can see i
 
 **Valid range.** A reading outside the operating range of the BME280 (−40 to 85 °C, 0 to 100 %RH, 300 to 1100 hPa) is impossible and comes from a disturbance on the I2C bus or a damaged chip. It is rejected like a failed read: the display keeps showing the previous reading, and nothing new is sent, stored or added to the charts; after 3 in a row the sensor is re-initialized and the display shows `SENSOR ERROR` until a valid reading arrives. Each rejected reading is logged with its raw values, and `sys` counts them (`rejected samples N`).
 
-**Altitude and sea-level pressure.** Weather services and airports report the pressure reduced to sea level (QNH); the pressure measured at 900 m is about 100 hPa lower. Set the altitude of the station in menuconfig ("Altitude of the station", in metres, including the floor it stands on): the display, the web page (main value and chart) and MQTT (`pressure_msl_hpa`) then show the sea-level pressure. Each 8 m of error in the altitude gives about 1 hPa of error; a topographic map or Google Earth is better than the GPS of a phone. The history and the CSV keep the pressure measured at the station.
+**Altitude and sea-level pressure.** Weather services and airports report the pressure reduced to sea level (QNH); the pressure measured at 900 m is about 100 hPa lower. Set the altitude of the station on the setup page or in menuconfig ("Altitude of the station", in metres, including the floor it stands on): the display, the web page (main value and chart) and MQTT (`pressure_msl_hpa`) then show the sea-level pressure. Each 8 m of error in the altitude gives about 1 hPa of error; a topographic map or Google Earth is better than the GPS of a phone. The history and the CSV keep the pressure measured at the station.
 
 **Dew point.** Computed from the temperature and the humidity (Magnus formula), shown on the web page below the humidity and sent by MQTT (`dew_point_c`).
 
@@ -158,7 +171,7 @@ The page has no password and is read-only; anyone on the local network can see i
 
 The offsets are applied to every reading before it is shown, sent or stored, and are kept in NVS across restarts and firmware updates. They belong to the chip: after a sensor replacement they are reset to 0, with a warning. Every change is recorded in the flash history, so it is known which readings were corrected.
 
-**Check against an airport.** With the ICAO code of a nearby airport set in menuconfig ("METAR airport", for example `SBGR`), the station fetches its METAR from aviationweather.gov once an hour and compares its own sea-level pressure with the airport's QNH. After a day of samples, `sys`, the web page footer and the MQTT topic `weather-station/<device_id>/metar` show the median difference of the last 7 days and the two corrections that would cancel it: a pressure offset (`cal set pressure ...`) or a different altitude. The station never applies them by itself; set the altitude first if it is uncertain, and the offset for what remains. A warning is logged when the median exceeds ±2 hPa. Pick an airport less than about 50 km away; leave the code empty to disable the check (no request leaves the station).
+**Check against an airport.** With the ICAO code of a nearby airport set on the setup page or in menuconfig ("METAR airport", for example `SBGR`), the station fetches its METAR from aviationweather.gov once an hour and compares its own sea-level pressure with the airport's QNH. After a day of samples, `sys`, the web page footer and the MQTT topic `weather-station/<device_id>/metar` show the median difference of the last 7 days and the two corrections that would cancel it: a pressure offset (`cal set pressure ...`) or a different altitude. The station never applies them by itself; set the altitude first if it is uncertain, and the offset for what remains. A warning is logged when the median exceeds ±2 hPa. Pick an airport less than about 50 km away; leave the code empty to disable the check (no request leaves the station).
 
 ## Measurement history
 
@@ -192,7 +205,22 @@ To save the CSV on the PC, press `Ctrl+T` then `Ctrl+L` in the monitor before `l
 
 To see how often Wi-Fi drops, `sys` and the `health:` line count the connections lost since start per disconnection reason, for example `Wi-Fi drops 3 (reason 6: 2, reason 200: 1), last 420 s ago`.
 
-In the serial monitor, `sys` shows the uptime, why the station last started, the free memory, the device and sensor identifiers and the firmware version, the calibration, the samples rejected as out of range, the altitude, the METAR check, the Wi-Fi link (signal, IP, gateway), the network watchdog (last sign of traffic and where it came from), the MQTT state and how many web requests were served. Every 10 minutes the same figures appear in the log as a `health:` line.
+In the serial monitor, `sys` shows the uptime, why the station last started, the free memory, the source of the settings, the device and sensor identifiers and the firmware version, the calibration, the samples rejected as out of range, the altitude, the METAR check, the Wi-Fi link (signal, IP, gateway), the network watchdog (last sign of traffic and where it came from), the MQTT state and how many web requests were served. Every 10 minutes the same figures appear in the log as a `health:` line.
+
+**One device cannot reach the station while others can.** On the serial console, `arp clear`, then try to open the page from that device, then `arp`. If the device's address is listed, its packets reach the station and the answers are lost on the way back; if not, its packets never arrive (often a mesh that does not forward between its nodes or bands; try that device on the same node as the station). `ping <ip>` from the station tests the other direction, and `ping <ip> 20 1400` tests large packets:
+
+```
+weather> arp
+IP address       MAC address        interface
+192.168.0.1      02:10:18:51:79:8c  st
+192.168.0.106    8c:17:59:3f:7e:9c  st
+weather> ping 192.168.0.106 3
+PING 192.168.0.106, 56 bytes, 3 times
+64 bytes from 192.168.0.106: seq=1 ttl=128 time=12 ms
+seq=2: no reply
+64 bytes from 192.168.0.106: seq=3 ttl=128 time=9 ms
+3 sent, 2 received, 33 % lost
+```
 
 If Wi-Fi stays associated but no traffic gets through, the station notices it within about 3 minutes (every minute it looks for MQTT or web traffic, and pings the router only when there is none), reconnects Wi-Fi, and after two reconnections without success restarts itself. The history in flash is kept. After a restart, the first log lines show the reason (`health: Started by: software restart`).
 
@@ -200,7 +228,7 @@ The MQTT client ID is the device identifier (`ws-` followed by the board's MAC a
 
 ## Configuration
 
-The station name, the altitude (−500 to 9000 m, default 0), the METAR airport for the pressure check (default empty, off), the measurement interval (1 to 3600 s, default 2 s), the Wi-Fi credentials, and the MQTT broker URI, user, password and publish interval (1 to 86400 s, default 60 s), the history log interval (1 to 86400 s, default 60 s), and the display switch-off after inactivity (0 to 1440 min, default 5 min) are set with `idf.py menuconfig` in the "Weather Station" menu.
+The station name, the altitude (−500 to 9000 m, default 0), the METAR airport for the pressure check (default empty, off), the measurement interval (1 to 3600 s, default 2 s), the Wi-Fi credentials, and the MQTT broker URI, user, password and publish interval (1 to 86400 s, default 60 s), the history log interval (1 to 86400 s, default 60 s), and the display switch-off after inactivity (0 to 1440 min, default 5 min) are set with `idf.py menuconfig` in the "Weather Station" menu. The station name, the altitude, the METAR airport, the Wi-Fi network and the MQTT broker (address, user, password) can also be set from a phone ([Setup from a phone](#setup-from-a-phone)); once stored there, they replace the menuconfig values, which then serve as factory defaults for `setup clear`.
 
 All other tunable parameters live in [main/config.h](main/config.h):
 
@@ -208,6 +236,7 @@ All other tunable parameters live in [main/config.h](main/config.h):
 - BME280 and SSD1306 addresses;
 - display size (128x64 or 128x32), contrast and yellow band;
 - valid range of the sensor readings, calibration limits and the parameters of the METAR check;
+- setup mode: hold time of the button, access point, idle timeout, test timeouts and the limits of the settings;
 - task periods, stack sizes and priorities;
 - NTP server, time zone (default UTC-3), Wi-Fi retry interval and signal icon thresholds;
 - MQTT topic prefix, QoS, retain flag and reconnect interval;
@@ -228,7 +257,7 @@ The firmware runs five FreeRTOS tasks, a sixth when a METAR airport is set, plus
 - **`taskHealth`**: pings the router every minute and recovers a stuck network, and logs a health line every 10 minutes.
 - **`taskMetar`**: once an hour, compares the sea-level pressure with the METAR of the configured airport.
 
-The HTTP server (`web_server`) runs in its own ESP-IDF task once Wi-Fi has an IP address.
+The HTTP server (`web_server`) runs in its own ESP-IDF task once Wi-Fi has an IP address. In setup mode (`provisioning`), none of the network tasks run: the station opens its own access point with a DNS server and the setup page instead, and a task of its own tests new settings.
 
 Wi-Fi and NTP run in the background (`net_time`), as does the MQTT client (`telemetry`); all of them reconnect on their own and network failures never stop the station. The MQTT client waits while Wi-Fi is down and reconnects as soon as Wi-Fi is back.
 
@@ -251,9 +280,12 @@ main/
 ├── charts.*      # chart tables (1 h / 24 h / 7 d) kept in RAM for the web page
 ├── quality.*     # calibration + `cal` command, sea-level pressure, dew point
 ├── metar.*       # hourly check of the pressure against an airport METAR
+├── settings.*    # per-installation settings: stored in NVS, or the menuconfig values
+├── provisioning.* # setup mode: access point, captive DNS, setup page, `setup` command
 ├── web_page.html # the web page, embedded in the firmware
+├── setup_page.html # the setup page, embedded in the firmware
 ├── idf_component.yml  # external component: espressif/mqtt
-└── Kconfig.projbuild  # menuconfig menu: name, altitude, METAR airport, intervals, Wi-Fi, MQTT broker
+└── Kconfig.projbuild  # menuconfig menu: intervals, and factory defaults of name, altitude, METAR airport, Wi-Fi, MQTT broker
 partitions.csv    # flash layout: nvs, phy_init, factory app (2 MB), history (5 MB)
 ```
 

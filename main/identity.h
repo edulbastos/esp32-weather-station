@@ -23,12 +23,16 @@ struct Sensor {
     uint32_t fingerprint;  // CRC-32 of the factory trimming parameters
 };
 
-// Reads the MAC address and the name, and opens NVS. Call first in app_main.
+// Reads the MAC address and opens NVS. Call first in app_main.
 esp_err_t init();
+
+// FR-10.2: sets the station name (from the settings, FR-12.1) and logs the
+// device line. Call once after settings::init().
+void set_name(const char *name);
 
 const uint8_t *device_mac();     // 6 bytes
 const char *device_id();         // e.g. "ws-a0b76551a842"
-const char *device_name();       // CONFIG_WS_DEVICE_NAME, may be empty
+const char *device_name();       // from the settings (FR-12.1), may be empty
 const char *firmware_version();  // e.g. "v2.0.0"
 
 // Writes "ws-" + 12 hex digits.

@@ -11,6 +11,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "nvs.h"
+#include "settings.h"
 #include "telemetry.h"
 
 static const char *TAG = "quality";
@@ -303,7 +304,7 @@ esp_err_t register_console_command()
     return esp_console_cmd_register(&cmd);
 }
 
-int altitude_m() { return config::ALTITUDE_M; }
+int altitude_m() { return settings::get().altitude_m; }
 
 float msl_factor_at(float altitude_m)
 {
@@ -312,7 +313,7 @@ float msl_factor_at(float altitude_m)
 
 float msl_factor()
 {
-    static const float factor = msl_factor_at(static_cast<float>(config::ALTITUDE_M));
+    static const float factor = msl_factor_at(static_cast<float>(altitude_m()));  // settings are fixed after start
     return factor;
 }
 

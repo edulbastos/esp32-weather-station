@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Weather Station setup</title>
+<style>
+  :root { --bg: #f5f6f8; --card: #fff; --text: #1b2330; --muted: #677085; --line: #d5d9e0;
+          --accent: #1c6dc9; --ok: #2b8a3e; --err: #c92a2a; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #11151b; --card: #1a2029; --text: #e6e9ee; --muted: #8b95a7; --line: #333c4a;
+            --accent: #62adff; --ok: #5fd07a; --err: #ff6b6b; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 520px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .meta { color: var(--muted); font-size: 13px; margin-bottom: 16px; overflow-wrap: anywhere; }
+  fieldset { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+             padding: 12px 14px 4px; margin: 0 0 14px; min-width: 0; }
+  legend { font-weight: 600; padding: 0 4px; }
+  label { display: block; font-size: 14px; color: var(--muted); margin: 0 0 4px; }
+  .field { margin-bottom: 12px; }
+  input[type=text], input[type=password], input[type=number], select {
+    width: 100%; font: inherit; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--bg); color: var(--text); }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row > :first-child { flex: 1; min-width: 0; }
+  .check { display: flex; gap: 6px; align-items: center; font-size: 14px; color: var(--muted); margin-top: 6px; }
+  button { font: inherit; padding: 9px 14px; border-radius: 8px; border: 1px solid var(--line);
+           background: var(--card); color: var(--text); cursor: pointer; }
+  button.primary { width: 100%; background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button:disabled { opacity: .55; cursor: default; }
+  .hint { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  #result { border-radius: 10px; padding: 12px 14px; margin-top: 14px; display: none; overflow-wrap: anywhere; }
+  #result.busy { display: block; background: var(--card); border: 1px solid var(--line); }
+  #result.ok { display: block; border: 1px solid var(--ok); color: var(--ok); }
+  #result.err { display: block; border: 1px solid var(--err); color: var(--err); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Weather Station setup</h1>
+  <div class="meta" id="meta">Loading…</div>
+
+  <form id="form" autocomplete="off">
+    <fieldset>
+      <legend>Wi-Fi network</legend>
+      <div class="field">
+        <label for="networks">Network</label>
+        <div class="row">
+          <select id="networks"><option value="">Scanning…</option></select>
+          <button type="button" id="rescan">Scan</button>
+        </div>
+      </div>
+      <div class="field">
+        <label for="wifi_ssid">Network name (or type a hidden one)</label>
+        <input type="text" id="wifi_ssid" name="wifi_ssid" required maxlength="32">
+      </div>
+      <div class="field">
+        <label for="wifi_password">Password</label>
+        <input type="password" id="wifi_password" name="wifi_password" maxlength="63">
+        <label class="check"><input type="checkbox" id="show_wifi"> show</label>
+        <label class="check"><input type="checkbox" id="wifi_password_clear" name="wifi_password_clear" value="1"> open network (no password)</label>
+        <div class="hint" id="wifi_hint"></div>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>MQTT broker</legend>
+      <div class="field">
+        <label for="mqtt_uri">Address (empty = no transmission)</label>
+        <input type="text" id="mqtt_uri" name="mqtt_uri" maxlength="128" placeholder="mqtt://192.168.1.10:1883">
+      </div>
+      <div class="field">
+        <label for="mqtt_username">User name</label>
+        <input type="text" id="mqtt_username" name="mqtt_username" maxlength="64">
+      </div>
+      <div class="field">
+        <label for="mqtt_password">Password</label>
+        <input type="password" id="mqtt_password" name="mqtt_password" maxlength="64">
+        <label class="check"><input type="checkbox" id="mqtt_password_clear" name="mqtt_password_clear" value="1"> no password</label>
+        <div class="hint" id="mqtt_hint"></div>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Station</legend>
+      <div class="field">
+        <label for="name">Name</label>
+        <input type="text" id="name" name="name" maxlength="32" placeholder="e.g. Balcony">
+      </div>
+      <div class="field">
+        <label for="altitude_m">Altitude (metres)</label>
+        <input type="number" id="altitude_m" name="altitude_m" required min="-500" max="9000" step="1">
+        <div class="hint">Of the station itself, including its floor; used for the sea-level pressure.</div>
+      </div>
+      <div class="field">
+        <label for="metar">Airport for the pressure check (ICAO code, empty = off)</label>
+        <input type="text" id="metar" name="metar" maxlength="4" placeholder="e.g. SBPA" autocapitalize="characters">
+      </div>
+    </fieldset>
+
+    <button type="submit" class="primary" id="save">Test and save</button>
+    <div class="hint">The station first joins the network to test it; nothing is stored if that fails.
+      Keep this page open. If your phone asks, stay connected to this network although it has no internet.</div>
+  </form>
+  <div id="result"></div>
+</main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const form = $("form"), result = $("result");
+
+function show(cls, text) { result.className = cls; result.textContent = text; }
+
+async function getJson(url) {
+  const r = await fetch(url, { cache: "no-store" });
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return r.json();
+}
+
+async function loadSettings() {
+  const s = await getJson("/api/settings");
+  $("meta").textContent = s.device_id + " · firmware " + s.firmware + " · settings: " + s.source;
+  for (const k of ["wifi_ssid", "mqtt_uri", "mqtt_username", "name", "altitude_m", "metar"]) $(k).value = s[k];
+  $("wifi_hint").textContent = s.wifi_password_set ? "A password is stored; leave empty to keep it." : "";
+  $("mqtt_hint").textContent = s.mqtt_password_set ? "A password is stored; leave empty to keep it." : "";
+}
+
+async function loadNetworks(refresh) {
+  const sel = $("networks");
+  sel.innerHTML = "<option value=''>Scanning…</option>";
+  $("rescan").disabled = true;
+  try {
+    const d = await getJson("/api/scan" + (refresh ? "?refresh=1" : ""));
+    sel.innerHTML = "";
+    const first = document.createElement("option");
+    first.value = ""; first.textContent = d.networks.length ? "Choose a network…" : "No network found";
+    sel.appendChild(first);
+    for (const n of d.networks) {
+      const o = document.createElement("option");
+      o.value = n.ssid;
+      o.textContent = n.ssid + "  (" + n.rssi + " dBm" + (n.secure ? "" : ", open") + ")";
+      if (n.ssid === $("wifi_ssid").value) o.selected = true;
+      sel.appendChild(o);
+    }
+  } catch (e) {
+    sel.innerHTML = "<option value=''>Scan failed</option>";
+  }
+  $("rescan").disabled = false;
+}
+
+$("networks").addEventListener("change", (e) => { if (e.target.value) $("wifi_ssid").value = e.target.value; });
+$("rescan").addEventListener("click", () => loadNetworks(true));
+$("show_wifi").addEventListener("change", (e) => { $("wifi_password").type = e.target.checked ? "text" : "password"; });
+$("metar").addEventListener("input", (e) => { e.target.value = e.target.value.toUpperCase(); });
+
+function setBusy(busy) { for (const el of form.elements) el.disabled = busy; }
+
+async function poll() {
+  const started = Date.now();
+  while (Date.now() - started < 90000) {
+    await new Promise((r) => setTimeout(r, 1000));
+    let st;
+    try { st = await getJson("/api/status"); }
+    catch (e) { show("busy", "Waiting for the station… (your phone may reconnect to the setup network)"); continue; }
+    if (st.state === "testing_wifi" || st.state === "testing_broker") { show("busy", st.message); continue; }
+    if (st.state === "saved") {
+      let text = st.message;
+      if (st.broker && st.broker !== "off") text += "\nMQTT broker: " + st.broker + ".";
+      text += "\nReconnect your phone to your usual Wi-Fi network.";
+      show("ok", text);
+      return;
+    }
+    if (st.state === "failed") { show("err", st.message + " Nothing was stored."); setBusy(false); return; }
+  }
+  show("err", "No answer from the station. Reconnect to the setup network and reload this page.");
+  setBusy(false);
+}
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const body = new URLSearchParams(new FormData(form));
+  setBusy(true);
+  show("busy", "Sending…");
+  try {
+    const r = await fetch("/api/save", { method: "POST", body });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { show("err", d.error || ("HTTP " + r.status)); setBusy(false); return; }
+    show("busy", "Testing the Wi-Fi network…");
+    poll();
+  } catch (err) {
+    show("err", "The station did not answer: " + err.message);
+    setBusy(false);
+  }
+});
+
+loadSettings().catch(() => { $("meta").textContent = "Settings could not be loaded; reload the page."; })
+  .finally(() => loadNetworks(false));
+</script>
+</body>
+</html>

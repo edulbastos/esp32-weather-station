@@ -101,10 +101,40 @@ constexpr size_t      METAR_MIN_SAMPLES  = 24;    // before the median is report
 constexpr float       METAR_WARN_HPA     = 2.0f;  // |median| above this is logged as a warning
 
 // ---------------------------------------------------------------------------
+// Provisioning (FR-12.x)
+// ---------------------------------------------------------------------------
+// FR-12.1: limits of the settings entered on the setup page (DEVICE_NAME_MAX
+// above for the name); the menuconfig values are the factory defaults
+constexpr size_t      SETTINGS_SSID_MAX       = 32;   // bytes (802.11 limit)
+constexpr size_t      SETTINGS_WIFI_PASS_MIN  = 8;    // WPA2; empty = open network
+constexpr size_t      SETTINGS_WIFI_PASS_MAX  = 63;
+constexpr size_t      SETTINGS_MQTT_URI_MAX   = 128;
+constexpr size_t      SETTINGS_MQTT_USER_MAX  = 64;
+constexpr size_t      SETTINGS_MQTT_PASS_MAX  = 64;
+constexpr int         SETTINGS_ALTITUDE_MIN_M = -500;
+constexpr int         SETTINGS_ALTITUDE_MAX_M = 9000;
+// FR-12.2: entering and leaving setup mode
+constexpr uint32_t    SETUP_HOLD_MS          = 5000;            // BOOT held this long
+constexpr uint32_t    SETUP_IDLE_TIMEOUT_MS  = 15 * 60 * 1000;  // no client -> back to normal
+// FR-12.3: access point of setup mode, "ws-setup-" + last 2 bytes of the MAC
+constexpr const char *SETUP_AP_PREFIX        = "ws-setup-";
+constexpr uint8_t     SETUP_AP_CHANNEL       = 1;
+constexpr size_t      SETUP_AP_PASS_LEN      = 8;
+constexpr const char *SETUP_AP_PASS_CHARS    = "23456789abcdefghijkmnpqrstuvwxyz";  // no 0 o 1 l
+// FR-12.4, FR-12.5: setup page, scan and test of new settings
+constexpr size_t      SETUP_SCAN_MAX         = 20;      // networks listed
+constexpr size_t      SETUP_FORM_MAX_BYTES   = 1024;    // body of a save request
+constexpr uint32_t    SETUP_WIFI_TEST_MS     = 30000;   // connect and get an IP address
+constexpr int         SETUP_WIFI_AUTH_FAILS  = 3;       // password rejected this often -> wrong
+constexpr uint32_t    SETUP_BROKER_TEST_MS   = 10000;
+constexpr uint32_t    SETUP_RESTART_DELAY_MS = 5000;    // after a successful save
+
+// ---------------------------------------------------------------------------
 // Time of day via Wi-Fi + NTP (FR-5.x)
 // ---------------------------------------------------------------------------
 // Credentials come from `idf.py menuconfig` -> "Weather Station" and live only
-// in the local sdkconfig, so they are never committed (FR-5.6).
+// in the local sdkconfig, so they are never committed (FR-5.6). Since v2.6.0
+// they are the factory defaults; the setup page stores its own (FR-12.1).
 constexpr const char *WIFI_SSID           = CONFIG_WS_WIFI_SSID;
 constexpr const char *WIFI_PASSWORD       = CONFIG_WS_WIFI_PASSWORD;
 constexpr uint32_t    WIFI_RETRY_DELAY_MS = 10000;
@@ -120,13 +150,15 @@ constexpr int8_t      WIFI_RSSI_FAIR_DBM  = -70;
 // the station then stops receiving while it can still send; off by default
 // on mains power. Turn on to save energy (e.g. on battery).
 constexpr bool        WIFI_POWER_SAVE     = false;
-// Low, stable Wi-Fi rates (section 6.4). The station sends little data, but
-// on a link that passes small packets and loses large ones (over 85 % of the
-// pings of 1400 bytes at -61 dBm) the web page stalls while MQTT works. No
-// 802.11n, and everything is sent at a fixed rate: 6 Mbps OFDM, a basic rate
-// every 802.11g access point receives. Needs A-MPDU off when sending
-// (sdkconfig.defaults).
-constexpr uint8_t     WIFI_PROTOCOLS      = WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G;
+// Wi-Fi rates (section 6.4). The station sends little data, but on a link
+// that passes small packets and loses large ones (over 85 % of the pings of
+// 1400 bytes at -61 dBm) the web page stalls while MQTT works, so everything
+// is sent at a fixed rate: 6 Mbps OFDM, a basic rate every 802.11g access
+// point receives. Needs A-MPDU off when sending (sdkconfig.defaults).
+// Since v2.6.0 the station joins with 802.11n again, the most widely
+// supported mode; the access point picks the rates it sends to the station.
+// v2.3.4 .. v2.5.0: WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G (no 802.11n).
+constexpr uint8_t     WIFI_PROTOCOLS      = WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N;
 constexpr wifi_phy_rate_t WIFI_TX_RATE    = WIFI_PHY_RATE_6M;
 // Log level of the Wi-Fi driver (tag "wifi"). Its INFO lines (Block Ack
 // sessions "ba-add"/"ba-del"/"DELBA", power save, state changes) are routine;
@@ -195,6 +227,14 @@ constexpr uint32_t    HEALTH_LOG_PERIOD_MS = 10 * 60 * 1000;  // health line in 
 constexpr uint32_t    NET_CHECK_PERIOD_MS  = 60 * 1000;       // gateway ping
 constexpr uint32_t    NET_PING_COUNT       = 5;     // pings per check; one reply is enough
 constexpr uint32_t    NET_PING_TIMEOUT_MS  = 2000;
+// NFR-2.5: console commands `ping <ip> [count [size]]` and `arp`
+constexpr uint32_t    DIAG_PING_COUNT      = 5;     // default number of pings
+constexpr uint32_t    DIAG_PING_MAX_COUNT  = 100;
+constexpr uint32_t    DIAG_PING_SIZE       = 56;    // default payload bytes, as Linux ping
+constexpr uint32_t    DIAG_PING_MAX_SIZE   = 1472;  // largest payload in one 1500-byte frame
+constexpr uint32_t    DIAG_PING_INTERVAL_MS = 1000;
+constexpr uint32_t    DIAG_PING_TIMEOUT_MS = 1000;
+constexpr uint32_t    DIAG_PING_TASK_STACK = 3072;  // the ping callbacks print
 constexpr int         NET_CHECK_FAILS      = 3;  // failed checks in a row -> Wi-Fi reconnect
 constexpr int         NET_MAX_RECONNECTS   = 2;  // reconnects without recovery -> restart
 
@@ -224,6 +264,9 @@ constexpr uint32_t    CONSOLE_TASK_STACK  = 6144;  // `log dump` formats floats
 constexpr uint32_t    HEALTH_TASK_STACK   = 4096;
 constexpr uint32_t    WEB_TASK_STACK      = 6144;  // JSON/CSV formatting + 1 KB send buffer
 constexpr uint32_t    METAR_TASK_STACK    = 8192;  // HTTPS client and TLS handshake (FR-11.4)
+constexpr uint32_t    SETUP_TASK_STACK    = 6144;  // MQTT client of the broker test (FR-12.5)
+constexpr uint32_t    SETUP_DNS_STACK     = 3072;  // captive portal DNS (FR-12.3)
+constexpr uint32_t    SETUP_WEB_STACK     = 6144;  // setup page and JSON (FR-12.4)
 constexpr UBaseType_t MEASURE_TASK_PRIO   = 5;
 constexpr UBaseType_t DISPLAY_TASK_PRIO   = 4;
 constexpr UBaseType_t PUBLISH_TASK_PRIO   = 3;
@@ -232,6 +275,7 @@ constexpr UBaseType_t CONSOLE_TASK_PRIO   = 2;
 constexpr UBaseType_t WEB_TASK_PRIO       = 2;
 constexpr UBaseType_t HEALTH_TASK_PRIO    = 2;
 constexpr UBaseType_t METAR_TASK_PRIO     = 1;
+constexpr UBaseType_t SETUP_TASK_PRIO     = 2;
 
 // Max time a task waits for a mutex before giving up on the current cycle
 constexpr uint32_t    MUTEX_TIMEOUT_MS    = 500;

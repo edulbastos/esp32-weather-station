@@ -81,15 +81,6 @@ esp_err_t init()
     }
     format_device_id(s_mac, s_device_id, sizeof(s_device_id));
 
-    // FR-10.2: the name is for people only; longer names are cut.
-    if (strlen(config::DEVICE_NAME) > config::DEVICE_NAME_MAX) {
-        ESP_LOGW(TAG, "Device name longer than %u characters, cut", static_cast<unsigned>(config::DEVICE_NAME_MAX));
-    }
-    snprintf(s_name, sizeof(s_name), "%s", config::DEVICE_NAME);
-    json_escape(s_name, s_name_json, sizeof(s_name_json));
-    ESP_LOGI(TAG, "Device %s%s%s%s, firmware %s", s_device_id, s_name[0] ? " (\"" : "", s_name,
-             s_name[0] ? "\")" : "", firmware_version());
-
     // FR-10.7: the last sensor per position is kept in NVS. Without NVS the
     // station runs on, but cannot tell a replacement across restarts.
     err = nvs_flash_init();
@@ -103,6 +94,15 @@ esp_err_t init()
                  esp_err_to_name(err));
     }
     return ESP_OK;
+}
+
+void set_name(const char *name)
+{
+    // FR-10.2: the name is for people only (settings, FR-12.1).
+    snprintf(s_name, sizeof(s_name), "%s", name);
+    json_escape(s_name, s_name_json, sizeof(s_name_json));
+    ESP_LOGI(TAG, "Device %s%s%s%s, firmware %s", s_device_id, s_name[0] ? " (\"" : "", s_name,
+             s_name[0] ? "\")" : "", firmware_version());
 }
 
 const uint8_t *device_mac() { return s_mac; }

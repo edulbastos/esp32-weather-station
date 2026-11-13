@@ -13,6 +13,7 @@
 #include "identity.h"
 #include "net_time.h"
 #include "quality.h"
+#include "settings.h"
 #include "mqtt_client.h"
 
 static const char *TAG = "telemetry";
@@ -51,7 +52,7 @@ void on_mqtt_event(void *, esp_event_base_t, int32_t id, void *)
 {
     switch (static_cast<esp_mqtt_event_id_t>(id)) {
     case MQTT_EVENT_CONNECTED:
-        ESP_LOGI(TAG, "Connected to MQTT broker %s as \"%s\"", config::MQTT_BROKER_URI, identity::device_id());
+        ESP_LOGI(TAG, "Connected to MQTT broker %s as \"%s\"", settings::get().mqtt_uri, identity::device_id());
         s_connected = true;
         // FR-6.7: replaces the last will "offline" of a previous connection.
         esp_mqtt_client_publish(s_client, s_status_topic, config::MQTT_STATUS_ONLINE, 0, config::MQTT_QOS, true);
@@ -112,8 +113,8 @@ namespace telemetry {
 
 esp_err_t start()
 {
-    if (config::MQTT_BROKER_URI[0] == '\0') {
-        ESP_LOGW(TAG, "MQTT broker not configured (idf.py menuconfig), data transmission disabled");
+    if (settings::get().mqtt_uri[0] == '\0') {
+        ESP_LOGW(TAG, "MQTT broker not configured, data transmission disabled");
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -124,10 +125,10 @@ esp_err_t start()
     }
 
     esp_mqtt_client_config_t cfg = {};
-    cfg.broker.address.uri = config::MQTT_BROKER_URI;
-    if (config::MQTT_USERNAME[0] != '\0') {
-        cfg.credentials.username = config::MQTT_USERNAME;
-        cfg.credentials.authentication.password = config::MQTT_PASSWORD;
+    cfg.broker.address.uri = settings::get().mqtt_uri;
+    if (settings::get().mqtt_username[0] != '\0') {
+        cfg.credentials.username = settings::get().mqtt_username;
+        cfg.credentials.authentication.password = settings::get().mqtt_password;
     }
     cfg.network.disable_auto_reconnect = true;
     // FR-6.5: a connection that stops delivering is noticed after about
@@ -171,7 +172,7 @@ esp_err_t start()
         err = esp_event_handler_register(IP_EVENT, IP_EVENT_STA_LOST_IP, on_wifi_lost, nullptr);
     }
     if (err == ESP_OK) {
-        ESP_LOGI(TAG, "Publishing to %s, topic \"%s\", every %lu ms", config::MQTT_BROKER_URI,
+        ESP_LOGI(TAG, "Publishing to %s, topic \"%s\", every %lu ms", settings::get().mqtt_uri,
                  s_data_topic, static_cast<unsigned long>(config::MQTT_PUBLISH_PERIOD_MS));
     }
     return err;
