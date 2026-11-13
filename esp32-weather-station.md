@@ -219,6 +219,46 @@ This section makes the readings comparable with those of other stations and weat
     *   Nothing is written to the history (FR-10.6) or to NVS. The request reveals the public IP address of the network and the chosen airport to the service; no identifier of the station is sent.
     *   Adds the ESP-IDF components `esp_http_client` and `esp-tls` with the certificate bundle (section 5.2). A consumer of MQTT with access to the internet can perform the same check without this requirement, using `pressure_hpa`, `pressure_msl_hpa` and `altitude_m` (FR-11.2).
 
+### 3.12 Provisioning
+This section lets the station be installed without a development environment: the Wi-Fi network, the MQTT broker and the other per-installation settings are entered from the browser of a phone, over a Wi-Fi access point that the station opens for that purpose. Bluetooth is not used: the official provisioning apps only send the Wi-Fi credentials, and a browser needs no app on any phone. The values of `idf.py menuconfig` remain the factory defaults, so development works as before.
+
+*   **FR-12.1** [PROPOSED]: The station MUST keep its per-installation settings in NVS, where they can be changed without a new firmware build. Changes FR-5.6, FR-6.6, FR-10.2, FR-11.2 and FR-11.4.
+    *   **Settings:** Wi-Fi SSID and password (FR-5.6); MQTT broker URI, user name and password (FR-6.6); station name (FR-10.2); altitude (FR-11.2); METAR airport (FR-11.4). The intervals (measurement, publish, log) and the display switch-off time stay in menuconfig only.
+    *   **Source:** the settings are stored together, as one set (NVS namespace `settings`). While no set is stored, the station uses the values of `idf.py menuconfig`, as before; once a set is stored, it replaces all of them, and a later change in menuconfig has no effect until the set is erased (FR-12.6). The source in use (`stored` or `menuconfig`) is logged at start and shown by `sys` (NFR-2.4).
+    *   **Effect:** the settings are read at start. Every module that used the menuconfig constants (`net_time`, `telemetry`, `identity`, `quality`, `metar`) reads them from the active set instead; the sea-level factor (FR-11.2) is computed at start from the active altitude, and `taskMetar` is created when the active set names an airport, so the METAR code is always part of the firmware (about 90 KB of flash, section 5.2).
+    *   **Limits**, checked on every save: SSID 1 to 32 bytes; Wi-Fi password empty (open network) or 8 to 63 characters; broker URI empty (transmission off) or starting with `mqtt://` or `mqtts://`, up to 128 characters; MQTT user name and password up to 64 characters; name up to 32 characters (FR-10.2); altitude -500 to 9000 m; METAR airport empty or 4 letters (stored in capitals). The limits are in `main/config.h`.
+    *   Changing the settings never touches the history (FR-7.x), the calibration (FR-11.1) or the identifiers (FR-10.1, FR-10.3). The info message (FR-10.4) carries the new name and altitude after the restart that applies them.
+
+*   **FR-12.2** [PROPOSED]: The station MUST enter a setup mode in which it offers the settings for editing, and leave it on its own. Changes FR-9.1.
+    *   **Entry:** (a) at start, when the active set has no SSID (a new station); (b) when the BOOT button is held for 5 s (`main/config.h`) at any time: a shorter press keeps switching the display on and off (FR-9.1), and the press that started the hold may have switched it off; (c) with the console command `setup` (FR-12.6). A station whose network is merely unreachable does not enter setup mode by itself, so an outage of the router never opens an access point.
+    *   **During setup mode:** measuring, the display and the history continue (FR-1.x, FR-7.2). The connection to the configured network is dropped, so MQTT goes `offline` through its last will (FR-6.7) and nothing is published; the normal web page (FR-8.1), the METAR check (FR-11.4) and the network watchdog (NFR-2.3) are suspended, so the watchdog does not restart the station.
+    *   **Exit:** after a successful save (FR-12.5), the station restarts with the new settings. Without a save it returns to normal operation with the old settings when a second 5-second hold of BOOT or `setup cancel` ends the mode, or after 15 minutes (`main/config.h`) during which no device was connected to its access point. A new station without an SSID stays in setup mode.
+    *   Entry and exit are logged with their cause (`ESP_LOGI`).
+
+*   **FR-12.3** [PROPOSED]: In setup mode the station MUST open a Wi-Fi access point of its own, and the OLED MUST show how to reach it.
+    *   **Access point:** WPA2-PSK on channel 1, named `ws-setup-` followed by the last 2 bytes of the MAC in lowercase hex (e.g. `ws-setup-f480`), one client at a time; address `192.168.4.1`, with DHCP for the client. The password is 8 random characters (digits and lowercase letters without `0`, `o`, `1`, `l`), new at every entry, so only someone who can read the display or the serial console can join. The station keeps its station interface (mode AP+STA) to scan for networks and to test new credentials (FR-12.5).
+    *   **Captive portal:** a DNS server on the access point answers every name with `192.168.4.1`, and the setup page answers any address, so most phones open it by themselves after joining; otherwise the user opens `http://192.168.4.1/`.
+    *   **Display:** while in setup mode the display stays on (FR-9.2 does not apply) and shows, instead of the measurements: `SETUP` in the header, the network name, the password and `192.168.4.1`. The same lines are logged on the serial console at entry.
+
+*   **FR-12.4** [PROPOSED]: In setup mode the station MUST serve a setup page at `http://192.168.4.1/` to edit the settings of FR-12.1.
+    *   **Content:** the device identifier, the firmware version and the source of the active settings; the Wi-Fi networks found by a scan (name, signal in dBm and whether it is protected, strongest first, at most 20, scanned again on request) to pick from, and a field for a hidden network; the Wi-Fi password; the MQTT broker URI, user name and password; the station name, the altitude and the METAR airport. Each field is filled with the active value, except the passwords.
+    *   **Passwords:** never sent to the browser, never logged and never shown by `sys`. An empty password field keeps the stored password; a check box clears it (open network, broker without password).
+    *   **Form:** one HTML file embedded in the firmware like the web page (section 6.5), without external resources, usable on a phone screen; the same input limits as FR-12.1 are checked in the page and again by the station.
+    *   The normal web page stays read-only and offers no settings (FR-8.1); the setup page exists only in setup mode, on the access point.
+
+*   **FR-12.5** [PROPOSED]: Saving MUST test the new Wi-Fi credentials before storing them, so a typing error does not leave the station unreachable.
+    *   On "Save", the station checks the limits, then connects its station interface to the chosen network while the access point stays open (both use the channel of the chosen network; the phone may lose the connection for a moment and reconnects to the access point by itself). The page shows the progress and the result within 30 s: connected with the IP address obtained, wrong password, network not found, or no IP address.
+    *   **Success:** with a broker URI, the station also tries the broker for up to 10 s and shows the result (connected, refused with the reason, or not reached). The set is then stored, whatever the broker result: a broker can be down at installation time. The page shows the IP address under which the normal web page will be reached, and the station restarts 5 s later.
+    *   **Failure of the Wi-Fi test:** nothing is stored; the page keeps the entered values (except the passwords) and shows the cause, and the station stays in setup mode.
+    *   The phone has to join its usual network again by itself after the restart; the page says so.
+
+*   **FR-12.6** [PROPOSED]: The serial console MUST offer the command `setup`: `setup` enters setup mode, `setup cancel` leaves it without changes, `setup show` lists the active settings and their source with the passwords masked (`***` when set, empty otherwise), and `setup clear` erases the stored set, after which the station restarts with the values of menuconfig (a new station without an SSID enters setup mode). `setup clear` touches nothing else: history, calibration and sensor records stay.
+
+*   **FR-12.7** [PROPOSED]: Security of provisioning.
+    *   Settings can be changed only by someone with physical access: the access point appears only after a button press at the station, the console command or on a new station, and its password is shown only on the display and the serial console.
+    *   The setup page is served over HTTP inside the WPA2 network of the access point; the passwords travel only from the browser to the station.
+    *   The settings are stored in NVS without encryption, as the menuconfig values were stored in the firmware image before; whoever can read the flash of the board can read them.
+
 ## 4. Non-Functional Requirements
 
 ### 4.1 Performance
@@ -329,4 +369,5 @@ This section makes the readings comparable with those of other stations and weat
 ## 7. Open Issues / Future Extensions
 
 *   **Hardware RTC:** Add an RTC module (e.g. DS3231) so the time of day survives power loss without Wi-Fi (the time of day via NTP is implemented in v1.1.0).
+*   **QR code for setup:** In setup mode (FR-12.3), the display could show a QR code that joins the access point (`WIFI:T:WPA;S:<name>;P:<password>;;`) instead of the name and password; at 2 pixels per module a QR code of version 3 takes 58 × 58 pixels of the 128 × 64 display.
 *   **Additional sensors:** Support a second sensor in the hardware and the drivers. The history format 2 (FR-10.6) and the identifiers (FR-10.3) already allow up to 254 sensors per station.
