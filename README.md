@@ -109,7 +109,7 @@ Every station and every sensor has an identifier, so a management system can tel
 
 - **Device:** `ws-` followed by the board's MAC address, for example `ws-a0b76551a842`. It never changes, not even after reflashing.
 - **Sensor:** the type followed by a checksum of the chip's factory calibration data, for example `bme280-3fa91c07`. The BME280 has no serial number, but its calibration data differ from chip to chip, so a replaced sensor gets a new identifier; the station notices the replacement and logs it (`Sensor at position 0 (i2c@0x76) replaced: ...`).
-- **Name (optional):** a free-text name such as "Varanda", set on the setup page or in menuconfig ("Station name"). It is shown on the web page and in `sys`, but never used as a key.
+- **Name (optional):** a free-text name such as "Varanda", set on the setup page or in menuconfig ("Station name"). It is shown after the heading of the web page ("Weather Station · Varanda"), in the tab title, in `sys` and in the MQTT info message, but never used as a key.
 
 The identifiers appear in the boot log, in `sys`, on the web page, in every MQTT message and in every line of the history CSV.
 

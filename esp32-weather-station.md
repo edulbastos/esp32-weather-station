@@ -1,6 +1,6 @@
 # Functional Specification: ESP32 Weather Station
 
-**Version:** 2.6.0
+**Version:** 2.6.1
 
 ## Document Control
 
@@ -44,6 +44,7 @@
 | 2.4.0   | 2026-11-11 | Measurement quality: calibration offsets per channel with the `cal` console command (FR-11.1), pressure reduced to sea level from the configured altitude (FR-11.2), dew point (FR-11.3), and an hourly check of the sea-level pressure against the METAR of a nearby airport with a suggested correction (FR-11.4). FR-3.1, FR-6.3, FR-8.2, FR-8.3, FR-8.4, FR-10.4, FR-10.6 and NFR-2.4 changed. |
 | 2.5.0   | 2026-11-13 | Samples outside the operating range of the BME280 (-40 to 85 °C, 0 to 100 %RH, 300 to 1100 hPa) are rejected as failed reads, so an impossible value never reaches the display, MQTT, the history or the charts; rejected samples counted in `sys` (FR-1.6; NFR-2.4 changed). |
 | 2.6.0   | 2026-11-13 | Provisioning: the Wi-Fi network, the MQTT broker, the station name, the altitude and the METAR airport are stored in NVS and entered from a phone in a setup mode (access point with a captive setup page, reached by holding BOOT for 5 s, the `setup` console command, or on a station without a Wi-Fi network); new Wi-Fi credentials are tested before they are stored (FR-12.1 to FR-12.7). Console commands `ping` and `arp` to find where local traffic is lost (NFR-2.5); 802.11n allowed again (section 6.4). FR-5.6, FR-6.6, FR-9.1, FR-10.2, FR-11.2, FR-11.4 and NFR-2.4 changed. |
+| 2.6.1   | 2026-11-13 | The web page shows the station name after its heading ("Weather Station · Varanda"), so the station is recognized at once; before, the name was only in the tab title and the footer (FR-10.5 changed). |
 
 ### Requirement Markers
 *   **`[PROPOSED]`**: The requirement is new and not implemented yet.
@@ -170,7 +171,7 @@ This section gives every station, every sensor and every measurement an identifi
     *   Data messages go to `weather-station/<device_id>/data` (prefix `weather-station` in `main/config.h`), with QoS 1 and the retain flag as before, and carry `device_id` and `sensor_id` in addition to the fields of FR-6.3. Example: `{"device_id":"ws-a0b76551a842","sensor_id":"bme280-3fa91c07","time":1792161125,"temperature_c":23.41,"humidity_rh":56.12,"pressure_hpa":1012.84}`. With several stations on one broker, each keeps its own retained reading; before v2.0.0 all stations published to `weather-station/data` and overwrote each other's retained message.
     *   On every connection, and after a sensor change (FR-10.7), the station publishes a retained message (QoS 1) to `weather-station/<device_id>/info` with `device_id`, `name`, `firmware` (version), `measure_period_s`, `publish_period_s`, `log_period_s` and `sensors`, a list with, per sensor, `id`, `type`, `index`, `address` and `channels`, a list with, per channel, `id`, `unit` and `resolution`. A management system finds every station and its sensors by subscribing to `weather-station/+/info`.
     *   On every connection the station also clears the retained message on the former topic `weather-station/data` (empty retained message), so subscribers of that topic do not keep receiving a stale reading.
-*   **FR-10.5** [v2.0.0]: The web interface MUST show and serve the identifiers. Changes FR-8.3 and FR-8.5.
+*   **FR-10.5** [v2.0.0, CHANGED v2.6.1]: Since v2.6.1 the page also shows the name, when one is set, after its heading, e.g. "Weather Station · Varanda"; without a name the heading stays "Weather Station". The web interface MUST show and serve the identifiers. Changes FR-8.3 and FR-8.5.
     *   `/api/current` adds `device_id`, `name` and `sensor_id`.
     *   A new endpoint `/api/info` returns the same JSON as the MQTT info message (FR-10.4).
     *   The page shows the name, or the device identifier when no name is set, in its title and its footer, and the device and sensor identifiers in the footer.
@@ -377,6 +378,7 @@ This section lets the station be installed without a development environment: th
 *   [v2.2.0] The status line is aligned to the right, with the Wi-Fi RSSI in dBm on a line below the signal bars (see FR-5.8).
 *   [v2.3.0] The first line of the footer, aligned to the right opposite the CSV link, shows the firmware version and the heap (see FR-8.9).
 *   [v2.4.0] The pressure card and chart show the sea-level pressure, with the station pressure below the value; the humidity card shows the dew point; the footer marks a calibrated sensor and shows the METAR check (see FR-11.1 to FR-11.4).
+*   [v2.6.1] The heading shows the station name, when one is set: "Weather Station · <name>" (see FR-10.5).
 *   [v2.6.0] In setup mode, setup page at `http://192.168.4.1/` (opened by the captive portal of most phones) to edit the Wi-Fi network, the MQTT broker, the name, the altitude and the METAR airport (see FR-12.4, FR-12.5).
 
 ## 7. Open Issues / Future Extensions
