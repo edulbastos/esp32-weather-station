@@ -576,7 +576,7 @@ esp_err_t handle_page(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-    return httpd_resp_send(req, setup_page_start, setup_page_end - setup_page_start - 1);  // EMBED_FILES adds a NUL
+    return httpd_resp_send(req, setup_page_start, setup_page_end - setup_page_start);  // EMBED_FILES: the file as is, no NUL
 }
 
 esp_err_t handle_settings(httpd_req_t *req)

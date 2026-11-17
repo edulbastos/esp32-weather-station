@@ -58,9 +58,6 @@ void on_mqtt_event(void *, esp_event_base_t, int32_t id, void *)
         // FR-6.7: replaces the last will "offline" of a previous connection.
         esp_mqtt_client_publish(s_client, s_status_topic, config::MQTT_STATUS_ONLINE, 0, config::MQTT_QOS, true);
         telemetry::publish_info();
-        // FR-10.4: subscribers of the topic used before v2.0.0 no longer get
-        // a stale reading (empty retained message = delete).
-        esp_mqtt_client_publish(s_client, config::MQTT_LEGACY_TOPIC, "", 0, config::MQTT_QOS, true);
         break;
     case MQTT_EVENT_DISCONNECTED: {
         // Also sent after every failed connection attempt.

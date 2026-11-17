@@ -206,7 +206,6 @@ constexpr const char *MQTT_TOPIC_PREFIX   = "weather-station";
 constexpr const char *MQTT_STATUS_ONLINE  = "online";
 constexpr const char *MQTT_STATUS_OFFLINE = "offline";  // last will, sent by the broker
 // Topic used before v2.0.0; its retained message is cleared on every connection
-constexpr const char *MQTT_LEGACY_TOPIC   = "weather-station/data";
 constexpr int         MQTT_QOS            = 1;     // 1 = acknowledged by the broker, resent if not
 constexpr bool        MQTT_RETAIN         = true;  // new subscribers get the last reading
 constexpr uint32_t    MQTT_RECONNECT_MS   = 10000;

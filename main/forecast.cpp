@@ -44,7 +44,10 @@ constexpr const char *ZAMBRETTI[26] = {
 
 // The forecast number Z of each direction, from the sea-level pressure P in
 // hPa: falling Z = 127 - 0.12 P (1 .. 9), steady Z = 144 - 0.13 P (10 .. 19),
-// rising Z = 185 - 0.16 P (20 .. 32); each Z stands for one letter.
+// rising Z = 185 - 0.16 P (20 .. 32); each Z stands for one letter. No Z
+// gives V: on the original dial it is only reached through the wind and
+// season corrections, which are not applied (FR-13.2); its text stays so the
+// table is indexed by the letter.
 constexpr const char FALLING_CODES[] = "ABDHORUXZ";
 constexpr const char STEADY_CODES[]  = "ABEKNPSWXZ";
 constexpr const char RISING_CODES[]  = "ABCFGIJLMQTYZ";
