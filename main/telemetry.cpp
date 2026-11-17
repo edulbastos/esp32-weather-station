@@ -10,6 +10,7 @@
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/timers.h"
+#include "forecast.h"
 #include "identity.h"
 #include "net_time.h"
 #include "quality.h"
@@ -207,14 +208,23 @@ esp_err_t publish(const Bme280Data &data, time_t sample_time, int rssi_dbm)
     if (quality::dew_point(data.temperature_c, data.humidity_rh, dew)) {
         snprintf(dew_field, sizeof(dew_field), ",\"dew_point_c\":%.2f", dew);
     }
+    // FR-13.1, FR-13.2: tendency and forecast, left out while there is none.
+    char trend_field[160] = "";
+    const float msl = quality::to_msl(data.pressure_hpa);
+    forecast::Outlook outlook;
+    if (forecast::evaluate(msl, outlook)) {
+        snprintf(trend_field, sizeof(trend_field),
+                 ",\"pressure_trend_hpa\":%.2f,\"pressure_trend\":\"%s\",\"forecast_code\":\"%c\",\"forecast\":\"%s\"",
+                 outlook.change_hpa, forecast::trend_name(outlook.trend), outlook.code, outlook.text);
+    }
     char sensor_id[24];
     identity::sensor_id(0, sensor_id, sizeof(sensor_id));
-    char payload[320];
+    char payload[480];
     const int len = snprintf(payload, sizeof(payload),
                              "{\"device_id\":\"%s\",\"sensor_id\":\"%s\",%s\"temperature_c\":%.2f,"
-                             "\"humidity_rh\":%.2f,\"pressure_hpa\":%.2f,\"pressure_msl_hpa\":%.2f%s%s}",
+                             "\"humidity_rh\":%.2f,\"pressure_hpa\":%.2f,\"pressure_msl_hpa\":%.2f%s%s%s}",
                              identity::device_id(), sensor_id, time_field, data.temperature_c, data.humidity_rh,
-                             data.pressure_hpa, quality::to_msl(data.pressure_hpa), dew_field, rssi_field);
+                             data.pressure_hpa, msl, dew_field, trend_field, rssi_field);
 
     const int id = esp_mqtt_client_publish(s_client, s_data_topic, payload, len,
                                            config::MQTT_QOS, config::MQTT_RETAIN);

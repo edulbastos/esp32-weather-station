@@ -27,6 +27,7 @@
 #include "identity.h"
 #include "lwip/sockets.h"
 #include "mqtt_client.h"
+#include "qrcode.h"
 #include "settings.h"
 
 static const char *TAG = "setup";
@@ -42,6 +43,44 @@ constexpr uint32_t BOOT_SETUP = 0x5e7a5e7a;
 RTC_NOINIT_ATTR uint32_t s_boot_request;
 
 std::atomic<bool> s_active{false};
+provisioning::Qr s_qr = {};  // FR-12.8, size 0 = none
+
+// FR-12.8: copies the modules of the encoded symbol into s_qr.
+void store_qr(esp_qrcode_handle_t code, void *)
+{
+    const int size = esp_qrcode_get_size(code);
+    if (size > provisioning::QR_MAX_SIZE) {
+        return;
+    }
+    for (int y = 0; y < size; y++) {
+        uint32_t row = 0;
+        for (int x = 0; x < size; x++) {
+            row |= static_cast<uint32_t>(esp_qrcode_get_module(code, x, y)) << x;
+        }
+        s_qr.rows[y] = row;
+    }
+    s_qr.size = size;
+}
+
+// FR-12.8: the text of a Wi-Fi QR code (the format phones read to join a
+// network). The name and the password contain none of the characters that
+// would need escaping (\ ; , : ").
+void encode_join_qr(const char *ssid, const char *password)
+{
+    char text[80];
+    snprintf(text, sizeof(text), "WIFI:T:WPA;S:%s;P:%s;;", ssid, password);
+    esp_qrcode_config_t cfg = {};
+    cfg.display_func_with_cb = store_qr;
+    cfg.user_data = &s_qr;  // non-null selects the callback with user data
+    cfg.max_qrcode_version = config::SETUP_QR_MAX_VERSION;
+    cfg.qrcode_ecc_level = ESP_QRCODE_ECC_MED;
+    esp_log_level_set("QRCODE", ESP_LOG_WARN);  // it logs the text, password included
+    const esp_err_t err = esp_qrcode_generate(&cfg, text);
+    if (err != ESP_OK || s_qr.size == 0) {
+        s_qr.size = 0;
+        ESP_LOGW(TAG, "QR code not available: %s", esp_err_to_name(err));
+    }
+}
 char s_ap_ssid[16] = "";  // "ws-setup-" + 4 hex digits
 char s_ap_password[config::SETUP_AP_PASS_LEN + 1] = "";
 char s_ap_ip[16] = "192.168.4.1";
@@ -816,6 +855,7 @@ esp_err_t start(const char *cause)
         s_ap_password[i] = config::SETUP_AP_PASS_CHARS[esp_random() % chars];
     }
     s_ap_password[config::SETUP_AP_PASS_LEN] = '\0';
+    encode_join_qr(s_ap_ssid, s_ap_password);  // FR-12.8
 
     esp_err_t err;
     if ((err = esp_netif_init()) != ESP_OK || (err = esp_event_loop_create_default()) != ESP_OK) {
@@ -916,6 +956,11 @@ void screen(char lines[SCREEN_LINES][SCREEN_CHARS])
     default:             status = s_clients > 0 ? "Phone connected" : "Join with a phone"; break;
     }
     snprintf(lines[3], SCREEN_CHARS, "%s", status);
+}
+
+const Qr *join_qr()
+{
+    return active() && s_qr.size > 0 && s_clients == 0 && state() == IDLE ? &s_qr : nullptr;
 }
 
 void print_status()

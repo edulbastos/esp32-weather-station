@@ -6,6 +6,8 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
+#include "config.h"
 #include "esp_err.h"
 
 namespace provisioning {
@@ -33,6 +35,19 @@ void on_long_press();
 constexpr size_t SCREEN_LINES = 4;
 constexpr size_t SCREEN_CHARS = 22;  // 21 characters of the 5x7 font + NUL
 void screen(char lines[SCREEN_LINES][SCREEN_CHARS]);
+
+// FR-12.8: QR code that joins the access point; bit x of rows[y] is the
+// module at column x of row y, 1 = dark.
+constexpr int QR_MAX_SIZE = 17 + 4 * config::SETUP_QR_MAX_VERSION;
+static_assert(QR_MAX_SIZE <= 32, "one row of the QR code is a uint32_t");
+struct Qr {
+    int size;  // modules per side
+    uint32_t rows[QR_MAX_SIZE];
+};
+// The QR code while it is useful: in setup mode, no device connected to the
+// access point and no test running; nullptr otherwise (or when it could not
+// be encoded).
+const Qr *join_qr();
 
 // For `sys`: access point, password, clients and the state of a test.
 void print_status();

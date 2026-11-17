@@ -170,4 +170,41 @@ size_t snapshot(uint32_t hours, time_t now, Point *out, uint32_t &bucket_s)
     return count;
 }
 
+bool pressure_change(uint32_t span_s, time_t now, float &delta_hpa)
+{
+    const Tier *tier = nullptr;
+    for (const Tier &t : s_tiers) {
+        if (t.hours * 3600 >= span_s + t.bucket_s && (tier == nullptr || t.bucket_s < tier->bucket_s)) {
+            tier = &t;
+        }
+    }
+    if (tier == nullptr || s_lock == nullptr || now <= 0 || span_s < tier->bucket_s) {
+        return false;
+    }
+    const int32_t steps = static_cast<int32_t>(span_s / tier->bucket_s);
+    const int32_t newest = static_cast<int32_t>(now / tier->bucket_s);
+    const auto filled = [tier](int32_t index) -> const Bucket * {
+        const Bucket &b = tier->buckets[index % tier->points];
+        return b.n > 0 && b.index == index ? &b : nullptr;
+    };
+
+    bool found = false;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    for (int32_t index = newest; index >= newest - 1 && index - steps >= 0 && !found; index--) {
+        const Bucket *b = filled(index);
+        const Bucket *a = filled(index - steps);
+        if (b == nullptr || a == nullptr) {
+            continue;
+        }
+        // Average times of the two buckets; the newest is still filling.
+        const float dt = static_cast<float>(steps * tier->bucket_s) + b->offset_s - a->offset_s;
+        if (dt > 0.5f * span_s) {
+            delta_hpa = (b->press - a->press) * span_s / dt;
+            found = true;
+        }
+    }
+    xSemaphoreGive(s_lock);
+    return found;
+}
+
 }  // namespace charts

@@ -19,7 +19,8 @@ esp_err_t start();
 // Publishes one measurement of the sensor at position 0 as JSON.
 // `sample_time` is the Unix time of the reading, or 0 if the clock is not
 // synchronized yet (field left out). The sea-level pressure (FR-11.2) and
-// the dew point (FR-11.3) are added. `rssi_dbm` is the lowest Wi-Fi RSSI
+// the dew point (FR-11.3) are added, and the pressure tendency and the
+// forecast (FR-13.1, FR-13.2) when there are. `rssi_dbm` is the lowest Wi-Fi RSSI
 // since the previous message (FR-5.8), or net_time::NO_RSSI (field left
 // out). Returns ESP_ERR_INVALID_STATE while not
 // connected to the broker.

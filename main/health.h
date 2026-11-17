@@ -14,8 +14,17 @@ esp_err_t start(bool wifi_enabled);
 // Registers the console commands `sys`, `ping` and `arp` (NFR-2.5).
 esp_err_t register_console_command();
 
-// Logs why the chip started (power-on, software restart, watchdog, ...).
+// Logs why the chip started (power-on, software restart, watchdog, ...) and,
+// after a restart by the task watchdog (NFR-2.6), which task was silent.
 void log_reset_reason();
+
+// NFR-2.6: task watchdog. A task calls watch() once, from the task itself,
+// with the longest regular time between two of its cycles, and then alive()
+// at every cycle. When a watched task stays silent for that time plus
+// WATCHDOG_GRACE_MS, the station logs the task and restarts. The checks
+// start with start(). Returns the id for alive(), -1 when the table is full.
+int watch(const char *name, uint32_t cycle_ms);
+void alive(int id);
 
 // Heap of 8-bit capable memory in KB, as `sys` shows it; also served by
 // /api/current (FR-8.9).

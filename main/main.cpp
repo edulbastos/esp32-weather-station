@@ -34,6 +34,7 @@
 #include "driver/i2c_master.h"
 #include "esp_console.h"
 #include "esp_log.h"
+#include "forecast.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -218,6 +219,28 @@ void draw_measure_icon(int x, int y)
     }
 }
 
+// FR-13.1: pressure tendency arrows, 5x7, drawn between the PRES label and
+// the value: up = rising, down = falling, right = steady.
+constexpr int TREND_ICON_W = 5;
+constexpr int TREND_ICON_H = 7;
+constexpr const char *TREND_ICONS[3][TREND_ICON_H] = {
+    {"..X..", ".XXX.", "X.X.X", "..X..", "..X..", "..X..", "..X.."},  // rising
+    {".....", "..X..", "...X.", "XXXXX", "...X.", "..X..", "....."},  // steady
+    {"..X..", "..X..", "..X..", "..X..", "X.X.X", ".XXX.", "..X.."},  // falling
+};
+
+void draw_trend_icon(int x, int y, int direction)
+{
+    const char *const *icon = TREND_ICONS[1 - direction];
+    for (int row = 0; row < TREND_ICON_H; row++) {
+        for (int col = 0; col < TREND_ICON_W; col++) {
+            if (icon[row][col] != '.') {
+                s_display.draw_pixel(x + col, y + row);
+            }
+        }
+    }
+}
+
 void render_screen(const SharedData &data, bool measure_icon)
 {
     // 128x64: header in the top (yellow) band + three rows at scale 2 in the
@@ -277,12 +300,61 @@ void render_screen(const SharedData &data, bool measure_icon)
     draw_value_row(FIRST_ROW_Y + 0 * ROW_PITCH, "TEMP", temp, "\x7F" "C", SCALE);
     draw_value_row(FIRST_ROW_Y + 1 * ROW_PITCH, "HUM", hum, "%RH", SCALE);
     draw_value_row(FIRST_ROW_Y + 2 * ROW_PITCH, "PRES", press, "hPa", SCALE);
+    // FR-13.1: the tendency of the last 3 hours, after the label.
+    forecast::Outlook outlook;
+    if (data.valid && forecast::evaluate(quality::to_msl(data.values.pressure_hpa), outlook)) {
+        draw_trend_icon(Ssd1306::text_width("PRES") + 3, FIRST_ROW_Y + 2 * ROW_PITCH + (7 * SCALE - 7) / 2,
+                        outlook.direction);
+    }
 }
 
-// FR-12.3: in setup mode the display shows how to reach the setup page.
+// FR-12.8: the QR code that joins the access point, as dark modules on a
+// lit square at the left edge, with a short hint at the right. False when it
+// does not fit the display.
+bool render_setup_qr(const provisioning::Qr &qr)
+{
+    constexpr int HEADER_H = config::DISPLAY_YELLOW_ROWS > 0 ? config::DISPLAY_YELLOW_ROWS : 12;
+    const int scale = config::SETUP_QR_SCALE;
+    const int side = qr.size * scale + 2 * config::SETUP_QR_QUIET_PX;
+    if (side > Ssd1306::HEIGHT || side > Ssd1306::WIDTH / 2) {
+        return false;
+    }
+    s_display.clear();
+    const int top = (Ssd1306::HEIGHT - side) / 2;
+    for (int y = 0; y < side; y++) {
+        for (int x = 0; x < side; x++) {
+            const int mx = (x - config::SETUP_QR_QUIET_PX) / scale;
+            const int my = (y - config::SETUP_QR_QUIET_PX) / scale;
+            const bool inside = x >= config::SETUP_QR_QUIET_PX && y >= config::SETUP_QR_QUIET_PX &&
+                                mx < qr.size && my < qr.size;
+            const bool dark = inside && (qr.rows[my] >> mx & 1u);
+            s_display.draw_pixel(x, top + y, !dark);
+        }
+    }
+    const int left = side + 2;
+    const int width = Ssd1306::WIDTH - left;
+    const auto centered = [&](int y, const char *text) {
+        s_display.draw_string(left + (width - Ssd1306::text_width(text)) / 2, y, text);
+    };
+    centered((HEADER_H - 7) / 2, "SETUP");
+    static constexpr const char *HINT[] = {"Scan to", "join the", "network"};
+    const int pitch = (Ssd1306::HEIGHT - HEADER_H) / 3;
+    for (int i = 0; i < 3; i++) {
+        centered(HEADER_H + i * pitch + (pitch - 7) / 2, HINT[i]);
+    }
+    return true;
+}
+
+// FR-12.3: in setup mode the display shows how to reach the setup page;
+// FR-12.8: in turn with the QR code, while no device has joined.
 void render_setup_screen()
 {
     constexpr int HEADER_H = config::DISPLAY_YELLOW_ROWS > 0 ? config::DISPLAY_YELLOW_ROWS : 12;
+    const provisioning::Qr *qr = provisioning::join_qr();
+    const bool qr_turn = (pdTICKS_TO_MS(xTaskGetTickCount()) / config::SETUP_SCREEN_SWITCH_MS) % 2 == 0;
+    if (qr != nullptr && qr_turn && render_setup_qr(*qr)) {
+        return;
+    }
     char lines[provisioning::SCREEN_LINES][provisioning::SCREEN_CHARS];
     provisioning::screen(lines);
     s_display.clear();
@@ -297,8 +369,10 @@ void taskMeasure(void *)
 {
     int errors = 0;
     TickType_t last_wake = xTaskGetTickCount();
+    const int watch_id = health::watch("taskMeasure", config::MEASURE_PERIOD_MS);  // NFR-2.6
 
     while (true) {
+        health::alive(watch_id);
         Bme280Data sample = {};
         time_t sample_time = 0;
         esp_err_t err = ESP_ERR_TIMEOUT;
@@ -448,8 +522,11 @@ void taskDisplay(void *)
     TickType_t next_refresh = xTaskGetTickCount();
     TickType_t last_activity = next_refresh;  // FR-9.2: last button press or command
     bool on = true;
+    // NFR-2.6: while the display is off, a cycle lasts up to DISPLAY_OFF_WAKE_MS.
+    const int watch_id = health::watch("taskDisplay", std::max(config::DISPLAY_PERIOD_MS, config::DISPLAY_OFF_WAKE_MS));
 
     while (true) {
+        health::alive(watch_id);
         SharedData snapshot = {};
         if (xSemaphoreTake(s_data_mutex, mutex_timeout()) == pdTRUE) {
             snapshot = s_data;
@@ -495,8 +572,9 @@ void taskDisplay(void *)
                 }
             }
             if (!on) {
-                // Nothing to draw: sleep until a request or a new measurement.
-                ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+                // Nothing to draw: sleep until a request or a new measurement,
+                // waking now and then for the task watchdog (NFR-2.6).
+                ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(config::DISPLAY_OFF_WAKE_MS));
                 continue;
             }
         }
@@ -610,9 +688,11 @@ void taskPublish(void *)
     TickType_t last_sent_tick = 0;
     bool sent_any = false;
     TickType_t last_wake = xTaskGetTickCount();
+    const int watch_id = health::watch("taskPublish", config::MQTT_PUBLISH_PERIOD_MS);  // NFR-2.6
 
     while (true) {
         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(config::MQTT_PUBLISH_PERIOD_MS));
+        health::alive(watch_id);
 
         SharedData snapshot;
         if (!take_new_sample(snapshot, sent_any, last_sent_tick, "taskPublish")) {
@@ -639,9 +719,11 @@ void taskLog(void *)
     TickType_t last_logged_tick = 0;
     bool logged_any = false;
     TickType_t last_wake = xTaskGetTickCount();
+    const int watch_id = health::watch("taskLog", config::LOG_PERIOD_MS);  // NFR-2.6
 
     while (true) {
         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(config::LOG_PERIOD_MS));
+        health::alive(watch_id);
 
         SharedData snapshot;
         if (!take_new_sample(snapshot, logged_any, last_logged_tick, "taskLog")) {

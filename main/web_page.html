@@ -33,6 +33,7 @@
   .value { font-size: 34px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .unit { font-size: 15px; font-weight: 400; color: var(--muted); margin-left: 4px; }
   .sub { color: var(--muted); font-size: 13px; min-height: 1.45em; }
+  .value-text { font-size: 20px; font-weight: 600; line-height: 1.25; margin: 8px 0 4px; min-height: 1.25em; }
   .charts { display: grid; gap: 12px; }
   .chart svg { display: block; width: 100%; height: 170px; margin-top: 4px; }
   .chart text { fill: var(--muted); font-size: 11px; }
@@ -75,7 +76,11 @@
       <div class="sub" id="dew"></div></div>
     <div class="card"><div class="label" id="pres-label">Pressure</div>
       <div class="value"><span id="pres">----.-</span><span class="unit">hPa</span></div>
-      <div class="sub" id="pres-station"></div></div>
+      <div class="sub" id="pres-station"></div>
+      <div class="sub" id="pres-trend"></div></div>
+    <div class="card"><div class="label">Forecast</div>
+      <div class="value-text" id="forecast">–</div>
+      <div class="sub" id="forecast-note"></div></div>
   </section>
 
   <div class="chart-head">
@@ -134,6 +139,24 @@ let currentTimer = null;
 // call has started is dropped, so only one polling loop ever runs.
 let currentGen = 0;
 let measurePeriod = 60;  // s, from /api/current
+// FR-13.1, FR-13.2: pressure tendency of the last 3 hours and the Zambretti
+// forecast; both need 3 hours of measurements with the clock synchronized.
+const TREND_ARROWS = { rising: "↑", falling: "↓", steady: "→" };
+function showOutlook(d) {
+  if (d.pressure_trend == null) {
+    $("pres-trend").textContent = "";
+    $("forecast").textContent = "–";
+    $("forecast-note").textContent = d.valid ? "needs 3 hours of measurements" : "";
+    return;
+  }
+  const dir = d.pressure_trend.split("_")[0];
+  const words = d.pressure_trend.replace(/_/g, " ");
+  const change = (d.pressure_trend_hpa >= 0 ? "+" : "") + d.pressure_trend_hpa.toFixed(1);
+  $("pres-trend").textContent = TREND_ARROWS[dir] + " " + change + " hPa in 3 h, " + words;
+  $("forecast").textContent = d.forecast;
+  $("forecast-note").textContent = "Zambretti " + d.forecast_code + ", from pressure and tendency";
+}
+
 // FR-11.2: the pressure is shown reduced to sea level (QNH). The station
 // sends its own (station) pressure in the chart data, with its altitude.
 let altitude = null;  // m, from /api/current and /api/charts
@@ -226,6 +249,7 @@ async function loadCurrent() {
       // FR-11.2, FR-11.3: station pressure and dew point in small type.
       $("pres-station").textContent = d.altitude_m ? "station " + d.pressure_hpa.toFixed(1) + " hPa" : "";
       $("dew").textContent = d.dew_point_c != null ? "dew point " + d.dew_point_c.toFixed(1) + " °C" : "";
+      showOutlook(d);
       const when = d.time ? fmtTime(d.time) : "clock not synchronized";
       setStatus("Measured " + when + wifi, false);
       if (d.time) addPoint(d.time, [d.temperature_c, d.humidity_rh, d.pressure_msl_hpa]);
@@ -233,6 +257,7 @@ async function loadCurrent() {
       $("temp").textContent = $("hum").textContent = "--.-";
       $("pres").textContent = "----.-";
       $("pres-station").textContent = $("dew").textContent = "";
+      showOutlook({});
       setStatus("Sensor error" + wifi, true);
     }
   } catch (e) {

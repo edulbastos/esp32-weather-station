@@ -16,6 +16,7 @@
 #include "esp_netif.h"
 #include "lwip/sockets.h"
 #include "charts.h"
+#include "forecast.h"
 #include "gzip_stream.h"
 #include "health.h"
 #include "history.h"
@@ -232,7 +233,7 @@ esp_err_t handle_current(httpd_req_t *req)
     }
 
     // On the heap: with the METAR object the answer is about 1 KB.
-    constexpr size_t JSON_BYTES = 1408;
+    constexpr size_t JSON_BYTES = 1664;
     std::unique_ptr<char[]> buf(new (std::nothrow) char[JSON_BYTES]);
     if (!buf) {
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
@@ -280,12 +281,22 @@ esp_err_t handle_current(httpd_req_t *req)
         if (quality::dew_point(cur.values.temperature_c, cur.values.humidity_rh, dew)) {
             snprintf(dew_field, sizeof(dew_field), "%.2f", dew);
         }
+        // FR-13.1, FR-13.2: null while there is no tendency.
+        const float msl = quality::to_msl(cur.values.pressure_hpa);
+        char trend_fields[192] =
+            "\"pressure_trend_hpa\":null,\"pressure_trend\":null,\"forecast_code\":null,\"forecast\":null";
+        forecast::Outlook outlook;
+        if (forecast::evaluate(msl, outlook)) {
+            snprintf(trend_fields, sizeof(trend_fields),
+                     "\"pressure_trend_hpa\":%.2f,\"pressure_trend\":\"%s\",\"forecast_code\":\"%c\",\"forecast\":\"%s\"",
+                     outlook.change_hpa, forecast::trend_name(outlook.trend), outlook.code, outlook.text);
+        }
         snprintf(rest, rest_len,
                  "\"valid\":true,\"time\":%s,\"age_s\":%.1f,\"temperature_c\":%.2f,"
-                 "\"humidity_rh\":%.2f,\"pressure_hpa\":%.2f,\"pressure_msl_hpa\":%.2f,\"dew_point_c\":%s,"
+                 "\"humidity_rh\":%.2f,\"pressure_hpa\":%.2f,\"pressure_msl_hpa\":%.2f,\"dew_point_c\":%s,%s,"
                  "\"wifi_level\":%d,\"rssi_dbm\":%s,\"measure_period_s\":%lu,\"log_period_s\":%lu}",
                  time_field, cur.age_ms / 1000.0, cur.values.temperature_c, cur.values.humidity_rh,
-                 cur.values.pressure_hpa, quality::to_msl(cur.values.pressure_hpa), dew_field,
+                 cur.values.pressure_hpa, msl, dew_field, trend_fields,
                  net_time::wifi_level(), rssi_field,
                  static_cast<unsigned long>(config::MEASURE_PERIOD_MS / 1000),
                  static_cast<unsigned long>(config::LOG_PERIOD_MS / 1000));

@@ -2,7 +2,7 @@
 
 An ESP32 weather station that reads **temperature**, **humidity** and **air pressure** from a BME280 sensor and shows the values in real time on the 0.96" SSD1306 OLED display built into the ideaspark ESP32 development board. The date and time are fetched over Wi-Fi from an NTP server, the readings can be sent to an MQTT broker, a history of the readings is kept in the internal flash, and a web page shows everything on the local network.
 
-Written in C++ with **ESP-IDF v6.1** and **FreeRTOS**. The BME280 and SSD1306 drivers are implemented directly on top of the ESP-IDF I2C driver; the only external component is Espressif's MQTT client (`espressif/mqtt`), which the build downloads automatically from the ESP Component Registry.
+Written in C++ with **ESP-IDF v6.1** and **FreeRTOS**. The BME280 and SSD1306 drivers are implemented directly on top of the ESP-IDF I2C driver; the only external components are Espressif's MQTT client (`espressif/mqtt`) and QR code encoder (`espressif/qrcode`), which the build downloads automatically from the ESP Component Registry.
 
 <p align="center">
   <img src="images/station.jpeg" alt="The weather station: ideaspark ESP32 board with the BME280 wired to it, the OLED showing date, time, Wi-Fi signal, temperature, humidity and pressure" width="250" height="480">
@@ -19,11 +19,11 @@ What the OLED display shows (128x64):
 +--------------------------------+
 | TEMP              23.4  oC     |
 | HUM               56.1  %RH    |
-| PRES            1012.8  hPa    |
+| PRES ^          1012.8  hPa    |  <- arrow: pressure tendency of the last 3 hours
 +--------------------------------+
 ```
 
-The dot at the left lights up for 0.5 s each time a new measurement arrives. The Wi-Fi icon shows 1 to 3 arcs according to the signal strength and an X while disconnected. Before the clock is synchronized, the header shows "WEATHER STATION".
+The dot at the left lights up for 0.5 s each time a new measurement arrives. The arrow after `PRES` points up while the pressure rises, down while it falls and to the right while it is steady (see [Pressure tendency and forecast](#pressure-tendency-and-forecast)); it appears after 3 hours of measurements. The Wi-Fi icon shows 1 to 3 arcs according to the signal strength and an X while disconnected. Before the clock is synchronized, the header shows "WEATHER STATION".
 
 ## Display on/off (energy saving)
 
@@ -37,8 +37,8 @@ The red **PWR** LED is wired straight to the 3.3 V supply and cannot be switched
 
 The Wi-Fi network, the MQTT broker, the station name, the altitude and the METAR airport can be set without a computer:
 
-1. **Hold the BOOT button for 5 seconds.** The station restarts in setup mode; a new station without a Wi-Fi network starts in it by itself. The display shows `SETUP`, the name of the station's own Wi-Fi network (`ws-setup-` plus 4 hex digits) and its password, which is new every time.
-2. **Join that network with the phone.** Most phones then open the setup page by themselves; otherwise open `http://192.168.4.1/`. If the phone warns that the network has no internet, stay connected.
+1. **Hold the BOOT button for 5 seconds.** The station restarts in setup mode; a new station without a Wi-Fi network starts in it by itself. The display shows `SETUP`, the name of the station's own Wi-Fi network (`ws-setup-` plus 4 hex digits) and its password, which is new every time, in turn with a QR code (6 s each).
+2. **Join that network with the phone:** point the phone camera at the QR code and tap the suggested network (Android 10+, iOS 11+), or pick the network and type the password. Once a phone has joined, the display keeps the text screen with the progress. Most phones then open the setup page by themselves; otherwise open `http://192.168.4.1/`. If the phone warns that the network has no internet, stay connected.
 3. **Pick your Wi-Fi network** from the list (or type a hidden one), enter its password and the other settings, and tap **Test and save**. Fields you leave as they are keep their values; an empty password field keeps the stored password.
 4. The station first joins your network to test it. If the password is wrong or the network is not found, the page says so and **nothing is stored**. Otherwise it also tries the MQTT broker, stores the settings (even when the broker cannot be reached right now), shows the address of its web page and restarts. Reconnect the phone to your usual network.
 
@@ -118,10 +118,10 @@ The identifiers appear in the boot log, in `sys`, on the web page, in every MQTT
 With a broker URI set on the setup page or in menuconfig (for example `mqtt://192.168.1.10:1883`), the station publishes the latest reading every 60 s (configurable) to its own topic `weather-station/<device_id>/data`, as JSON with QoS 1 (the broker confirms each message; unconfirmed ones are sent again after a reconnection) and the retain flag:
 
 ```json
-{"device_id":"ws-a0b76551a842","sensor_id":"bme280-3fa91c07","time":1792161125,"temperature_c":23.41,"humidity_rh":56.12,"pressure_hpa":930.12,"pressure_msl_hpa":1016.78,"dew_point_c":14.16,"rssi_dbm":-67}
+{"device_id":"ws-a0b76551a842","sensor_id":"bme280-3fa91c07","time":1792161125,"temperature_c":23.41,"humidity_rh":56.12,"pressure_hpa":930.12,"pressure_msl_hpa":1016.78,"dew_point_c":14.16,"pressure_trend_hpa":-1.82,"pressure_trend":"falling","forecast_code":"O","forecast":"Showery, becoming less settled","rssi_dbm":-67}
 ```
 
-`time` is the Unix time of the reading and appears once the clock has been synchronized. `pressure_hpa` is the pressure measured at the station, `pressure_msl_hpa` the same reduced to sea level, and `dew_point_c` the dew point (see [Measurement quality](#measurement-quality)). `rssi_dbm` is the weakest Wi-Fi signal measured since the previous message (sampled with every measurement), so a consumer can follow the quality of the link over time; it is not stored in the flash history. On every connection, and after a sensor replacement, the station also publishes a retained message to `weather-station/<device_id>/info` with its name, firmware version, intervals and sensors (with channels, units and resolution); a management system finds all stations by subscribing to `weather-station/+/info`. The topic `weather-station/<device_id>/status` says whether the station is reachable: `online` while it is connected, and `offline`, which the broker publishes by itself about 90 s after the station stops answering (MQTT last will). To watch everything: `mosquitto_sub -h 192.168.1.10 -t 'weather-station/#' -v`. With an empty URI, or without Wi-Fi, nothing is sent; broker failures never stop the station.
+`time` is the Unix time of the reading and appears once the clock has been synchronized. `pressure_hpa` is the pressure measured at the station, `pressure_msl_hpa` the same reduced to sea level, and `dew_point_c` the dew point (see [Measurement quality](#measurement-quality)). `pressure_trend_hpa` and `pressure_trend` are the change of the sea-level pressure over the last 3 hours and its class, `forecast_code` and `forecast` the Zambretti forecast; these four are left out until the station has 3 hours of measurements (see [Pressure tendency and forecast](#pressure-tendency-and-forecast)). `rssi_dbm` is the weakest Wi-Fi signal measured since the previous message (sampled with every measurement), so a consumer can follow the quality of the link over time; it is not stored in the flash history. On every connection, and after a sensor replacement, the station also publishes a retained message to `weather-station/<device_id>/info` with its name, firmware version, intervals and sensors (with channels, units and resolution); a management system finds all stations by subscribing to `weather-station/+/info`. The topic `weather-station/<device_id>/status` says whether the station is reachable: `online` while it is connected, and `offline`, which the broker publishes by itself about 90 s after the station stops answering (MQTT last will). To watch everything: `mosquitto_sub -h 192.168.1.10 -t 'weather-station/#' -v`. With an empty URI, or without Wi-Fi, nothing is sent; broker failures never stop the station.
 
 > **Updating from v1.x:** up to v1.9.1 the readings went to `weather-station/data`, without identifiers. Subscribers must move to `weather-station/<device_id>/data` (or `weather-station/+/data`). The station clears the old retained message on that topic.
 
@@ -133,12 +133,12 @@ Once Wi-Fi is connected, the station serves a page on the local network. Its add
 I (5321) web: Web page at http://192.168.1.42/
 ```
 
-The page shows the current values (refreshed at every measurement) and charts from the flash history over the last hour, 24 hours or 7 days (buttons above the charts), and has a link to download the whole history as CSV. Each point of a chart is an average: of 1 minute over 1 hour (60 points), of 15 minutes over 24 hours (96 points) and of 2 hours over 7 days (84 points); few points keep the answer small, which matters on a weak Wi-Fi link. The station keeps the chart data of the three periods ready in RAM, updated at every measurement, so it answers in a few milliseconds whatever the measurement interval; the page loads all three periods when it opens, so switching between them is instant, and then only adds the new measurements, so it stays light even when left open; after the page was in the background (or the computer asleep) it reloads the data, so the lines stay continuous; the CSV keeps every single measurement. Point at a chart with the mouse (or touch it on a phone) to see the time and the values of that moment in all three charts at once. At the top right, the status line ends with the Wi-Fi signal bars, and the line below shows the signal in dBm (for example `-67 dBm`), refreshed at every measurement, which helps to find a good place for the station. The footer shows, on the right of the CSV download link, the firmware version and the heap memory (free now, lowest since the start, largest free block), the same figures as `sys`, so the station can be checked without the serial console. It needs no internet access and works on phones. Tip: reserve the station's IP in your router (DHCP reservation) so the address does not change.
+The page shows the current values (refreshed at every measurement), the pressure tendency below the pressure, a forecast card, and charts from the flash history over the last hour, 24 hours or 7 days (buttons above the charts), and has a link to download the whole history as CSV. Each point of a chart is an average: of 1 minute over 1 hour (60 points), of 15 minutes over 24 hours (96 points) and of 2 hours over 7 days (84 points); few points keep the answer small, which matters on a weak Wi-Fi link. The station keeps the chart data of the three periods ready in RAM, updated at every measurement, so it answers in a few milliseconds whatever the measurement interval; the page loads all three periods when it opens, so switching between them is instant, and then only adds the new measurements, so it stays light even when left open; after the page was in the background (or the computer asleep) it reloads the data, so the lines stay continuous; the CSV keeps every single measurement. Point at a chart with the mouse (or touch it on a phone) to see the time and the values of that moment in all three charts at once. At the top right, the status line ends with the Wi-Fi signal bars, and the line below shows the signal in dBm (for example `-67 dBm`), refreshed at every measurement, which helps to find a good place for the station. The footer shows, on the right of the CSV download link, the firmware version and the heap memory (free now, lowest since the start, largest free block), the same figures as `sys`, so the station can be checked without the serial console. It needs no internet access and works on phones. Tip: reserve the station's IP in your router (DHCP reservation) so the address does not change.
 
 | Address | Content |
 |---|---|
 | `/` | the page |
-| `/api/current` | current values (with sea-level pressure and dew point), identifiers, calibration, METAR check, Wi-Fi signal (`rssi_dbm`), firmware version and heap as JSON |
+| `/api/current` | current values (with sea-level pressure, dew point, pressure tendency and forecast), identifiers, calibration, METAR check, Wi-Fi signal (`rssi_dbm`), firmware version and heap as JSON |
 | `/api/info` | device, firmware, intervals and sensors as JSON (same as the MQTT info message) |
 | `/api/charts` | the three chart periods of the page (1 h, 24 h, 7 d) in one answer, as JSON |
 | `/api/history?hours=24&points=96` | history of the last N hours as JSON, averaged into P points (defaults: 24 hours; the chart's number of points for 1, 24 and 168 hours, else 150) |
@@ -199,13 +199,21 @@ To save the CSV on the PC, press `Ctrl+T` then `Ctrl+L` in the monitor before `l
 
 > **Updating from v1.5.0 or earlier:** v1.6.0 uses its own partition table (`partitions.csv`). New checkouts get it from `sdkconfig.defaults`; in an existing local `sdkconfig`, choose it in `idf.py menuconfig` → "Partition Table" → "Custom partition table CSV" (file `partitions.csv`). `idf.py flash` writes the new table; the Wi-Fi settings are not lost.
 
+## Pressure tendency and forecast
+
+**Tendency.** The station compares its sea-level pressure with that of 3 hours earlier (averages of 15 minutes, from the chart data in RAM, which is rebuilt from the history after a restart). The change is shown as an arrow on the display, below the pressure on the web page (for example `↓ -1.8 hPa in 3 h, falling`) and sent by MQTT. Classes, after the UK Met Office: steady below 0.5 hPa, then rising/falling *slowly* (below 1.6 hPa), *rising/falling* (below 3.6 hPa), *quickly* (up to 6 hPa) and *very rapidly* (above). A falling pressure usually means worsening weather, a rising one improving weather.
+
+**Forecast.** From the sea-level pressure and the direction of the tendency, the Zambretti forecaster picks one of 26 short forecasts, from "Settled fine" (A) to "Stormy, much rain" (Z), as the dial of a Zambretti barometer does. It is shown in its own card on the web page and sent by MQTT. It is a rough indication for the next hours: the original also uses the wind direction and the season, which the station does not know. The altitude must be set (see [Measurement quality](#measurement-quality)), since the forecast reads the sea-level pressure.
+
+Both need the clock synchronized and 3 hours of measurements; until then the arrow is missing, the page says "needs 3 hours of measurements" and MQTT leaves the fields out.
+
 ## Troubleshooting
 
 **Wi-Fi signal first.** The web page needs a signal of about −60 dBm or better (`sys` shows it, and the `health:` log line every 10 minutes). Around −65 to −75 dBm the link loses packets: the page and its charts can take seconds or stall. Move the station (or a mesh node) closer and keep the end of the ESP32 module, where the antenna is, free of cables and metal. An answer that takes a second or more is logged, for example `W (...) web: Slow answer: /api/charts, 16384 bytes in 3.2 s`; many of them mean a lossy link. `ping` from a computer to the station shows it too: more than a few percent packet loss is too much. Close the web page while downloading the full CSV: the server answers one request at a time, and the page's requests wait (and fail with `error in send : 104` in the log) until the download ends. Every Wi-Fi connection is logged with the access point, channel, channel width, security and signal, for example `Associated with "IoT" (ca:06:c3:51:a8:42), channel 6 HT20, WPA2, -57 dBm`, and every disconnection with the access point and the meaning of the reason, for example `Wi-Fi disconnected from "IoT" (ca:06:c3:51:a8:42, -61 dBm): reason 2, access point did not answer authentication`.
 
 To see how often Wi-Fi drops, `sys` and the `health:` line count the connections lost since start per disconnection reason, for example `Wi-Fi drops 3 (reason 6: 2, reason 200: 1), last 420 s ago`.
 
-In the serial monitor, `sys` shows the uptime, why the station last started, the free memory, the source of the settings, the device and sensor identifiers and the firmware version, the calibration, the samples rejected as out of range, the altitude, the METAR check, the Wi-Fi link (signal, IP, gateway), the network watchdog (last sign of traffic and where it came from), the MQTT state and how many web requests were served. Every 10 minutes the same figures appear in the log as a `health:` line.
+In the serial monitor, `sys` shows the uptime, why the station last started, the free memory, the source of the settings, the device and sensor identifiers and the firmware version, the calibration, the samples rejected as out of range, the altitude, the METAR check, the Wi-Fi link (signal, IP, gateway), the network watchdog (last sign of traffic and where it came from), the MQTT state, how many web requests were served and how long ago each task last completed a cycle (task watchdog). Every 10 minutes the same figures appear in the log as a `health:` line.
 
 **One device cannot reach the station while others can.** On the serial console, `arp clear`, then try to open the page from that device, then `arp`. If the device's address is listed, its packets reach the station and the answers are lost on the way back; if not, its packets never arrive (often a mesh that does not forward between its nodes or bands; try that device on the same node as the station). `ping <ip>` from the station tests the other direction, and `ping <ip> 20 1400` tests large packets:
 
@@ -224,6 +232,8 @@ seq=2: no reply
 
 If Wi-Fi stays associated but no traffic gets through, the station notices it within about 3 minutes (every minute it looks for MQTT or web traffic, and pings the router only when there is none), reconnects Wi-Fi, and after two reconnections without success restarts itself. The history in flash is kept. After a restart, the first log lines show the reason (`health: Started by: software restart`).
 
+If one of the station's tasks stops (stuck in a driver or waiting forever), the task watchdog notices it within its cycle plus 2 minutes, logs it and restarts the station; after the restart the log says which task it was, for example `health: Restarted by the task watchdog: taskLog was silent for 185 s (blocked)`, and `sys` repeats it.
+
 The MQTT client ID is the device identifier (`ws-` followed by the board's MAC address); it appears in the `Connected to MQTT broker ... as "..."` log line and in `sys`, which helps to find the station in the broker's log.
 
 ## Configuration
@@ -236,7 +246,9 @@ All other tunable parameters live in [main/config.h](main/config.h):
 - BME280 and SSD1306 addresses;
 - display size (128x64 or 128x32), contrast and yellow band;
 - valid range of the sensor readings, calibration limits and the parameters of the METAR check;
-- setup mode: hold time of the button, access point, idle timeout, test timeouts and the limits of the settings;
+- limits of the pressure tendency classes and the pressure range of the forecast;
+- setup mode: hold time of the button, access point, idle timeout, test timeouts, the limits of the settings and the QR code (size, scale, alternation time);
+- task watchdog: check period and grace time;
 - task periods, stack sizes and priorities;
 - NTP server, time zone (default UTC-3), Wi-Fi retry interval and signal icon thresholds;
 - MQTT topic prefix, QoS, retain flag and reconnect interval;
@@ -257,6 +269,8 @@ The firmware runs five FreeRTOS tasks, a sixth when a METAR airport is set, plus
 - **`taskHealth`**: pings the router every minute and recovers a stuck network, and logs a health line every 10 minutes.
 - **`taskMetar`**: once an hour, compares the sea-level pressure with the METAR of the configured airport.
 
+All tasks except `taskMetar` report to a task watchdog at every cycle; one that stays silent restarts the station.
+
 The HTTP server (`web_server`) runs in its own ESP-IDF task once Wi-Fi has an IP address. In setup mode (`provisioning`), none of the network tasks run: the station opens its own access point with a DNS server and the setup page instead, and a task of its own tests new settings.
 
 Wi-Fi and NTP run in the background (`net_time`), as does the MQTT client (`telemetry`); all of them reconnect on their own and network failures never stop the station. The MQTT client waits while Wi-Fi is down and reconnects as soon as Wi-Fi is back.
@@ -274,17 +288,18 @@ main/
 ├── telemetry.*   # MQTT client, JSON payload
 ├── history.*     # measurement history in flash + `log` console command
 ├── web_server.*  # HTTP server: page, JSON and CSV
-├── health.*      # health log, `sys` command, network watchdog
+├── health.*      # health log, `sys` command, network and task watchdogs
 ├── identity.*    # device and sensor identifiers, station name
 ├── gzip_stream.* # compact gzip compressor for the CSV download
 ├── charts.*      # chart tables (1 h / 24 h / 7 d) kept in RAM for the web page
 ├── quality.*     # calibration + `cal` command, sea-level pressure, dew point
+├── forecast.*    # pressure tendency over 3 hours, Zambretti forecast
 ├── metar.*       # hourly check of the pressure against an airport METAR
 ├── settings.*    # per-installation settings: stored in NVS, or the menuconfig values
-├── provisioning.* # setup mode: access point, captive DNS, setup page, `setup` command
+├── provisioning.* # setup mode: access point, captive DNS, setup page, QR code, `setup` command
 ├── web_page.html # the web page, embedded in the firmware
 ├── setup_page.html # the setup page, embedded in the firmware
-├── idf_component.yml  # external component: espressif/mqtt
+├── idf_component.yml  # external components: espressif/mqtt, espressif/qrcode
 └── Kconfig.projbuild  # menuconfig menu: intervals, and factory defaults of name, altitude, METAR airport, Wi-Fi, MQTT broker
 partitions.csv    # flash layout: nvs, phy_init, factory app (2 MB), history (5 MB)
 ```

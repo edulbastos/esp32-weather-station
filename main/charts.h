@@ -41,4 +41,11 @@ bool serves(uint32_t hours, uint32_t points);
 // current Unix time, or 0 if unknown (then the newest bucket ends the period).
 size_t snapshot(uint32_t hours, time_t now, Point *out, uint32_t &bucket_s);
 
+// FR-13.1: change of the (station) pressure over `span_s` seconds up to the
+// current Unix time `now`: the newest bucket (or the one before it, while the
+// newest is still empty) of the finest table that covers the span, minus the
+// bucket `span_s` earlier, scaled to exactly `span_s`. False while either
+// bucket is empty, e.g. less than `span_s` of data or no recent measurement.
+bool pressure_change(uint32_t span_s, time_t now, float &delta_hpa);
+
 }  // namespace charts

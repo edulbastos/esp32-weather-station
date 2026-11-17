@@ -1,10 +1,12 @@
 #include "health.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include "config.h"
+#include "esp_attr.h"
 #include "esp_console.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -58,6 +60,70 @@ std::atomic<const char *> s_last_ok_source{"none"};
 uint32_t s_last_web_requests = 0;
 std::atomic<int> s_failed_checks{0};
 std::atomic<int> s_forced_reconnects{0};
+
+// NFR-2.6: the watched tasks. A slot is filled once and then only its time
+// of the last cycle changes; `ready` publishes a filled slot to the checker.
+struct Watched {
+    const char *name;
+    uint32_t limit_ms;  // cycle plus grace
+    TaskHandle_t task;
+    std::atomic<int64_t> last_us;
+    std::atomic<bool> ready;
+};
+Watched s_watched[config::WATCHDOG_MAX_TASKS];
+std::atomic<int> s_watched_count{0};
+esp_timer_handle_t s_watch_timer = nullptr;
+
+// NFR-2.6: what the watchdog restarted for, kept across the software restart.
+constexpr uint32_t WATCHDOG_RECORD_MAGIC = 0x57444f47;  // "WDOG"
+struct WatchdogRecord {
+    uint32_t magic;
+    uint32_t silent_s;
+    char name[16];
+    char state[12];
+};
+RTC_NOINIT_ATTR WatchdogRecord s_watchdog_record;
+WatchdogRecord s_previous_watchdog = {};  // copy of the record at this start, for `sys`
+
+const char *task_state_text(TaskHandle_t task)
+{
+    switch (eTaskGetState(task)) {
+    case eRunning:   return "running";
+    case eReady:     return "ready";
+    case eBlocked:   return "blocked";
+    case eSuspended: return "suspended";
+    case eDeleted:   return "deleted";
+    default:         return "unknown";
+    }
+}
+
+// NFR-2.6: runs in the esp_timer task, which has a higher priority than every
+// task of the station, so a task that hogs the CPU cannot stop the check.
+void check_tasks(void *)
+{
+    const int64_t now = esp_timer_get_time();
+    const int count = std::min<int>(s_watched_count, config::WATCHDOG_MAX_TASKS);
+    for (int i = 0; i < count; i++) {
+        Watched &w = s_watched[i];
+        if (!w.ready) {
+            continue;
+        }
+        const int64_t silent_ms = (now - w.last_us) / 1000;
+        if (silent_ms <= w.limit_ms) {
+            continue;
+        }
+        const char *state = task_state_text(w.task);
+        ESP_LOGE(TAG, "Task watchdog: %s silent for %lld s (limit %lu s, state %s), restarting", w.name,
+                 silent_ms / 1000, static_cast<unsigned long>(w.limit_ms / 1000), state);
+        s_watchdog_record.magic = WATCHDOG_RECORD_MAGIC;
+        s_watchdog_record.silent_s = static_cast<uint32_t>(silent_ms / 1000);
+        strlcpy(s_watchdog_record.name, w.name, sizeof(s_watchdog_record.name));
+        strlcpy(s_watchdog_record.state, state, sizeof(s_watchdog_record.state));
+        fflush(stdout);
+        vTaskDelay(pdMS_TO_TICKS(200));  // let the log line out
+        esp_restart();
+    }
+}
 
 // Text of net_time::format_drops() with every reason in use.
 constexpr size_t DROPS_TEXT_BYTES = 40 + 24 * config::WIFI_DROP_REASONS;
@@ -209,9 +275,11 @@ void taskHealth(void *)
     const uint32_t log_every = config::HEALTH_LOG_PERIOD_MS / config::NET_CHECK_PERIOD_MS;
     uint32_t cycle = 0;
     TickType_t last_wake = xTaskGetTickCount();
+    const int watch_id = health::watch("taskHealth", config::NET_CHECK_PERIOD_MS);  // NFR-2.6
 
     while (true) {
         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(config::NET_CHECK_PERIOD_MS));
+        health::alive(watch_id);
         if (s_wifi_enabled) {
             check_network();
         }
@@ -473,6 +541,21 @@ int cmd_sys(int, char **)
         printf("MQTT: off\n");
     }
     printf("Web: %lu requests served\n", static_cast<unsigned long>(web_server::requests_served()));
+    // NFR-2.6: time since the last cycle of each watched task.
+    printf("Task watchdog (limit cycle + %lu s):", static_cast<unsigned long>(config::WATCHDOG_GRACE_MS / 1000));
+    const int64_t now = esp_timer_get_time();
+    const int count = std::min<int>(s_watched_count, config::WATCHDOG_MAX_TASKS);
+    for (int i = 0; i < count; i++) {
+        const Watched &w = s_watched[i];
+        if (w.ready) {
+            printf("%s %s %lld s", i ? "," : "", w.name, (now - w.last_us) / 1000000);
+        }
+    }
+    printf("\n");
+    if (s_previous_watchdog.magic == WATCHDOG_RECORD_MAGIC) {
+        printf("Last start was a restart by the task watchdog: %s silent for %lu s (%s)\n", s_previous_watchdog.name,
+               static_cast<unsigned long>(s_previous_watchdog.silent_s), s_previous_watchdog.state);
+    }
     return 0;
 }
 
@@ -480,9 +563,40 @@ int cmd_sys(int, char **)
 
 namespace health {
 
+int watch(const char *name, uint32_t cycle_ms)
+{
+    const int id = s_watched_count.fetch_add(1);
+    if (id >= static_cast<int>(config::WATCHDOG_MAX_TASKS)) {
+        ESP_LOGW(TAG, "Task watchdog full, %s not watched", name);
+        return -1;
+    }
+    Watched &w = s_watched[id];
+    w.name = name;
+    w.limit_ms = cycle_ms + config::WATCHDOG_GRACE_MS;
+    w.task = xTaskGetCurrentTaskHandle();
+    w.last_us = esp_timer_get_time();
+    w.ready = true;
+    return id;
+}
+
+void alive(int id)
+{
+    if (id >= 0 && id < static_cast<int>(config::WATCHDOG_MAX_TASKS)) {
+        s_watched[id].last_us = esp_timer_get_time();
+    }
+}
+
 esp_err_t start(bool wifi_enabled)
 {
     s_wifi_enabled = wifi_enabled;
+    // NFR-2.6: the task watchdog checks in the esp_timer task.
+    esp_timer_create_args_t args = {};
+    args.callback = check_tasks;
+    args.name = "taskWatchdog";
+    if (esp_timer_create(&args, &s_watch_timer) != ESP_OK ||
+        esp_timer_start_periodic(s_watch_timer, static_cast<uint64_t>(config::WATCHDOG_CHECK_MS) * 1000) != ESP_OK) {
+        ESP_LOGW(TAG, "Task watchdog unavailable");
+    }
     return xTaskCreate(taskHealth, "taskHealth", config::HEALTH_TASK_STACK, nullptr, config::HEALTH_TASK_PRIO,
                        &s_task) == pdPASS
                ? ESP_OK
@@ -522,6 +636,16 @@ esp_err_t register_console_command()
 void log_reset_reason()
 {
     ESP_LOGI(TAG, "Started by: %s", reset_reason_text(esp_reset_reason()));
+    // NFR-2.6: the record survives only a software restart; after any other
+    // start its content is random.
+    if (esp_reset_reason() == ESP_RST_SW && s_watchdog_record.magic == WATCHDOG_RECORD_MAGIC) {
+        s_previous_watchdog = s_watchdog_record;
+        s_previous_watchdog.name[sizeof(s_previous_watchdog.name) - 1] = '\0';
+        s_previous_watchdog.state[sizeof(s_previous_watchdog.state) - 1] = '\0';
+        ESP_LOGW(TAG, "Restarted by the task watchdog: %s was silent for %lu s (%s)", s_previous_watchdog.name,
+                 static_cast<unsigned long>(s_previous_watchdog.silent_s), s_previous_watchdog.state);
+    }
+    s_watchdog_record.magic = 0;
 }
 
 }  // namespace health

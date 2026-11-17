@@ -128,6 +128,31 @@ constexpr uint32_t    SETUP_WIFI_TEST_MS     = 30000;   // connect and get an IP
 constexpr int         SETUP_WIFI_AUTH_FAILS  = 3;       // password rejected this often -> wrong
 constexpr uint32_t    SETUP_BROKER_TEST_MS   = 10000;
 constexpr uint32_t    SETUP_RESTART_DELAY_MS = 5000;    // after a successful save
+// FR-12.8: QR code that joins the access point. Its text, about 40 bytes,
+// fits version 3 (29 x 29 modules) with medium error correction; drawn at
+// 2 pixels per module it takes 58 x 58 pixels, dark modules on a lit square
+// with a quiet zone of 3 pixels. Shown in turn with the text screen while no
+// device is connected to the access point.
+constexpr int         SETUP_QR_MAX_VERSION   = 3;
+constexpr int         SETUP_QR_SCALE         = 2;       // pixels per module
+constexpr int         SETUP_QR_QUIET_PX      = 3;       // lit border around the code
+constexpr uint32_t    SETUP_SCREEN_SWITCH_MS = 6000;    // QR code <-> text screen
+
+// ---------------------------------------------------------------------------
+// Pressure tendency and forecast (FR-13.x)
+// ---------------------------------------------------------------------------
+// FR-13.1: change of the sea-level pressure over 3 hours (WMO pressure
+// tendency), from the chart buckets; classes as in the shipping forecast of
+// the UK Met Office, with a wider "steady" band (the Met Office uses 0.1 hPa)
+// for the noise of the sensor and of the averages.
+constexpr uint32_t    TREND_SPAN_S           = 3 * 3600;
+constexpr float       TREND_STEADY_HPA       = 0.5f;  // |change| below: steady
+constexpr float       TREND_SLOW_HPA         = 1.6f;  // below: slowly
+constexpr float       TREND_QUICK_HPA        = 3.6f;  // from here: quickly
+constexpr float       TREND_VERY_RAPID_HPA   = 6.0f;  // above: very rapidly
+// FR-13.2: Zambretti forecast, valid for sea-level pressures in this range
+constexpr float       FORECAST_MIN_HPA       = 947.0f;
+constexpr float       FORECAST_MAX_HPA       = 1050.0f;
 
 // ---------------------------------------------------------------------------
 // Time of day via Wi-Fi + NTP (FR-5.x)
@@ -237,6 +262,16 @@ constexpr uint32_t    DIAG_PING_TIMEOUT_MS = 1000;
 constexpr uint32_t    DIAG_PING_TASK_STACK = 3072;  // the ping callbacks print
 constexpr int         NET_CHECK_FAILS      = 3;  // failed checks in a row -> Wi-Fi reconnect
 constexpr int         NET_MAX_RECONNECTS   = 2;  // reconnects without recovery -> restart
+// NFR-2.6: task watchdog. Each watched task reports at every cycle; one that
+// stays silent for its cycle plus the grace time restarts the station. The
+// grace covers the longest legitimate wait: an MQTT publish may wait 30 s
+// for the link (MQTT_NETWORK_TIMEOUT_MS), the network check about 30 s for
+// the gateway pings.
+constexpr uint32_t    WATCHDOG_CHECK_MS    = 10 * 1000;   // checked in the esp_timer task
+constexpr uint32_t    WATCHDOG_GRACE_MS    = 120 * 1000;
+constexpr size_t      WATCHDOG_MAX_TASKS   = 8;
+// taskDisplay wakes at least this often while the display is off
+constexpr uint32_t    DISPLAY_OFF_WAKE_MS  = 60 * 1000;
 
 // ---------------------------------------------------------------------------
 // Status LED (blue LED on GPIO2 of the board), used to signal error mode
