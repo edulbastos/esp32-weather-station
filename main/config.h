@@ -119,8 +119,10 @@ constexpr uint32_t    SETUP_IDLE_TIMEOUT_MS  = 15 * 60 * 1000;  // no client -> 
 // FR-12.3: access point of setup mode, "ws-setup-" + last 2 bytes of the MAC
 constexpr const char *SETUP_AP_PREFIX        = "ws-setup-";
 constexpr uint8_t     SETUP_AP_CHANNEL       = 1;
-constexpr size_t      SETUP_AP_PASS_LEN      = 8;
-constexpr const char *SETUP_AP_PASS_CHARS    = "23456789abcdefghijkmnpqrstuvwxyz";  // no 0 o 1 l
+// FR-12.9: 11 characters of 5 bits, about 55 bits; the longest password whose
+// QR code text (31 bytes + password) fits version 3 with medium ECC (42 bytes).
+constexpr size_t      SETUP_AP_PASS_LEN      = 11;
+constexpr char        SETUP_AP_PASS_CHARS[]  = "23456789abcdefghijkmnpqrstuvwxyz";  // no 0 o 1 l; 32 symbols
 // FR-12.4, FR-12.5: setup page, scan and test of new settings
 constexpr size_t      SETUP_SCAN_MAX         = 20;      // networks listed
 constexpr size_t      SETUP_FORM_MAX_BYTES   = 1024;    // body of a save request

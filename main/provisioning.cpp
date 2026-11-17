@@ -16,6 +16,7 @@
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "bootloader_random.h"
 #include "esp_random.h"
 #include "esp_system.h"
 #include "esp_timer.h"
@@ -850,10 +851,16 @@ esp_err_t start(const char *cause)
     // FR-12.3: name from the MAC, a new random password at every entry.
     const uint8_t *mac = identity::device_mac();
     snprintf(s_ap_ssid, sizeof(s_ap_ssid), "%s%02x%02x", config::SETUP_AP_PREFIX, mac[4], mac[5]);
-    const size_t chars = strlen(config::SETUP_AP_PASS_CHARS);
+    // FR-12.9: the radio, which feeds the hardware RNG with entropy, is still
+    // off here, so the entropy source of the boot loader (SAR ADC noise) is
+    // on for the draw and off again before Wi-Fi starts. 32 symbols: each
+    // character takes 5 bits of a random word, all equally likely.
+    static_assert(sizeof(config::SETUP_AP_PASS_CHARS) - 1 == 32, "the alphabet must have 32 symbols");
+    bootloader_random_enable();
     for (size_t i = 0; i < config::SETUP_AP_PASS_LEN; i++) {
-        s_ap_password[i] = config::SETUP_AP_PASS_CHARS[esp_random() % chars];
+        s_ap_password[i] = config::SETUP_AP_PASS_CHARS[esp_random() & 31];
     }
+    bootloader_random_disable();
     s_ap_password[config::SETUP_AP_PASS_LEN] = '\0';
     encode_join_qr(s_ap_ssid, s_ap_password);  // FR-12.8
 
