@@ -1,6 +1,6 @@
 # Functional Specification: Weather Station Frontend
 
-**Version:** 1.0.1
+**Version:** 1.0.2
 
 ## Document Control
 
@@ -10,6 +10,7 @@
 |---------|------------|-------------------------------------------|
 | 1.0.0   | 2026-11-20 | Initial specification: authenticated, read-only web frontend at `weather.elbastos.com.br` fed by the MQTT messages of the stations. |
 | 1.0.1   | 2026-11-20 | Broker access list optional: the broker is shared with other services and has none, so the backend account is protected by its password only (FR-1.3, FR-3.1 changed; section 6.5). Access list and TLS moved to section 7. |
+| 1.0.2   | 2026-11-20 | Documentation only: the installation guide (`frontend/README.md`) rewritten as one sequence from `git clone` to the first login, with a check per step, the three accounts explained, Python older than 3.11 (`uv`), and troubleshooting. |
 
 ### Requirement Markers
 *   **`[PROPOSED]`**: The requirement is new and not implemented yet.
