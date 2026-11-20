@@ -14,6 +14,8 @@ The project is built with ESP-IDF (v6.1) and uses FreeRTOS to run sensor measure
 
 ## Project Structure
 
+*   `weather-frontend.md`: Specification of the web frontend at `weather.elbastos.com.br` (MQTT consumer, Python + SQLite behind nginx, code in `frontend/`), versioned separately (tags `frontend-vX.Y.Z`).
+*   `frontend/`: The web frontend (Python 3.11+, FastAPI, `aiomqtt`, SQLite), installed on the server as the `weather-frontend` systemd service behind nginx (`frontend/README.md`). Package `weather_frontend/`: `config.py` (TOML configuration, every default), `db.py` (schema, migrations, sensor cards per position, chart buckets, CSV), `ingest.py` (MQTT topics `info`, `status`, `data`, `metar`; `Ingestor.handle()` has no network, so tests feed it directly), `auth.py` (Argon2id users, sessions, login rate limit), `events.py` (broadcaster to the SSE streams), `web.py` (pages, API, SSE, security headers), `maintenance.py` (sessions, retention, backups), `cli.py` (`serve`, `user`, `import`, `backup`), `pages/` and `static/` (HTML, CSS and JavaScript without external resources; the look and chart code of `main/web_page.html`, but no inline script or style because of the CSP). Also `tests/` (`pytest`), `requirements.txt` (pinned), `requirements-dev.txt`, `pyproject.toml`, `config.example.toml`, `weather-frontend.service`. Local virtual environment in `frontend/.venv` (not committed).
 *   `CMakeLists.txt`: ESP-IDF project file.
 *   `sdkconfig.defaults`: Default configuration (target `esp32`, console at 115200 baud, custom partition table, TCP send buffer of 8 MSS, `SO_LINGER` to reset a failed web connection, 6 TCP retransmissions, fallback DNS server, Wi-Fi A-MPDU aggregation off when sending). It only applies to settings missing from the local `sdkconfig`; a changed default has to be set in an existing `sdkconfig` too (`idf.py menuconfig`).
 *   `partitions.csv`: Flash layout (8 MB): `nvs`, `phy_init`, app `factory` (2 MB) and the `history` data partition (5 MB).
@@ -98,7 +100,9 @@ In setup mode (`provisioning`, after holding BOOT for 5 s, `setup`, or without a
 
 ## Specification and Release Workflow
 
-The functional specification is `esp32-weather-station.md`. It is the only place where requirements are added. Specification and firmware share one version number (SemVer), and each release is an annotated git tag `vX.Y.Z`.
+The functional specification of the station is `esp32-weather-station.md`. It is the only place where requirements of the station are added. Specification and firmware share one version number (SemVer), and each release is an annotated git tag `vX.Y.Z`.
+
+The web frontend (`weather.elbastos.com.br`, fed by the MQTT messages, code in `frontend/`) has its own specification, `weather-frontend.md`, the only place where its requirements are added, and its own version number (SemVer). Its releases are annotated git tags `frontend-vX.Y.Z`, and its commits are named `Release frontend-vX.Y.Z: <summary>`. The workflow below applies to both, each with its own specification, version and tags (for the frontend, `git describe --tags --abbrev=0 --match 'frontend-v*'`; for the station, `--match 'v*'`).
 
 **Version bump rules:**
 *   New functional requirement → MINOR (1.0.0 → 1.1.0)
@@ -107,7 +111,7 @@ The functional specification is `esp32-weather-station.md`. It is the only place
 
 **When asked to process the proposed requirements:**
 1.  Find every `[PROPOSED]` marker in the specification. If there is more than one, ask whether to release them together or one version each.
-2.  Compute the new version from the latest tag (`git describe --tags --abbrev=0`).
+2.  Compute the new version from the latest tag of that product (`git describe --tags --abbrev=0 --match 'v*'` for the station, `--match 'frontend-v*'` for the frontend).
 3.  Implement the code, following the conventions above.
 4.  Update the specification:
     *   Replace `[PROPOSED]` with `[vX.Y.Z]`.
@@ -116,8 +120,8 @@ The functional specification is `esp32-weather-station.md`. It is the only place
     *   Update the affected sections (architecture, interfaces).
     *   Remove items from section 7 that are now implemented.
 5.  Update `CLAUDE.md` and `README.md` if the structure or usage changed.
-6.  Run `idf.py build` and fix any errors.
-7.  Stop and report what changed. Do not commit yet; the user tests on the board first.
+6.  Run `idf.py build` (station) or the `pytest` tests in `frontend/` (frontend) and fix any errors.
+7.  Stop and report what changed. Do not commit yet; the user tests on the board (or the server) first.
 8.  After the user approves:
     *   Set the release date in the Revision History.
     *   Commit with the message `Release vX.Y.Z: <summary>`.

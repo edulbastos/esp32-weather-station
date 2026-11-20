@@ -1,0 +1,27 @@
+# Configuration of the weather frontend (weather-frontend.md, NFR-3.3).
+# Copy to /etc/weather-frontend/config.toml, readable only by the service user:
+#   install -m 640 -o root -g weather-frontend config.example.toml /etc/weather-frontend/config.toml
+# Every setting is optional; the values below are the defaults.
+
+public_origin = "https://weather.elbastos.com.br"  # FR-2.7; "http://localhost:8081" for a local test
+listen_host = "127.0.0.1"                           # FR-1.1: never a public address
+listen_port = 8081
+trusted_proxies = ["127.0.0.1", "::1"]              # X-Forwarded-For is trusted only from these (FR-2.6)
+
+db_path = "/var/lib/weather-frontend/weather.db"
+backup_dir = "/var/lib/weather-frontend/backup"
+backup_keep = 7                                     # NFR-2.3
+backup_hour = 3                                     # daily backup and retention at 03:30 local time
+retention_days = 0                                  # FR-5.1: 0 = keep every reading forever
+
+session_days = 30                                   # FR-2.4
+login_max_failures = 5                              # FR-2.6, within login_window_s
+login_window_s = 900
+
+[mqtt]
+host = "127.0.0.1"
+port = 1883
+username = "weather-frontend"                       # read-only account (section 6.5)
+password = "CHANGE-ME"
+client_id = "weather-frontend"                      # another one for a local test (section 6.6)
+topic_prefix = "weather-station"

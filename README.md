@@ -153,6 +153,10 @@ curl -OJ --compressed http://<ip>/history.csv              # keeps the name hist
 
 The page has no password and is read-only; anyone on the local network can see it. While the full CSV is downloading, the page pauses its updates (the server handles one request at a time).
 
+## Web frontend on the internet
+
+The folder [`frontend/`](frontend/) holds a separate web application that shows every station from anywhere, behind a login: it reads the MQTT messages above from the broker, keeps every reading in its own database, and shows one card per station and one card per sensor, and for each station the values and charts of the station's own page, updated live. It runs on the server of the broker, behind nginx, and never sends anything to a station. It has its own specification, [`weather-frontend.md`](weather-frontend.md), and its own versions (tags `frontend-vX.Y.Z`); installation and local test in [`frontend/README.md`](frontend/README.md).
+
 ## Measurement quality
 
 **Valid range.** A reading outside the operating range of the BME280 (−40 to 85 °C, 0 to 100 %RH, 300 to 1100 hPa) is impossible and comes from a disturbance on the I2C bus or a damaged chip. It is rejected like a failed read: the display keeps showing the previous reading, and nothing new is sent, stored or added to the charts; after 3 in a row the sensor is re-initialized and the display shows `SENSOR ERROR` until a valid reading arrives. Each rejected reading is logged with its raw values, and `sys` counts them (`rejected samples N`).

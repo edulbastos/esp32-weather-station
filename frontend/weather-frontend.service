@@ -1,0 +1,33 @@
+# systemd unit of the weather frontend (NFR-2.1, NFR-3.4).
+# Install: see frontend/README.md.
+[Unit]
+Description=Weather Station Frontend (MQTT to web)
+After=network-online.target mosquitto.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=weather-frontend
+Group=weather-frontend
+ExecStart=/opt/weather-frontend/venv/bin/weather-frontend --config /etc/weather-frontend/config.toml serve
+Restart=on-failure
+RestartSec=5
+
+# Hardening: write access only to the database and its backups.
+StateDirectory=weather-frontend
+StateDirectoryMode=0750
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+NoNewPrivileges=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictSUIDSGID=yes
+LockPersonality=yes
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

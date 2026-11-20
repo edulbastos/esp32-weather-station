@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Weather Stations</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<main class="wide">
+  <header>
+    <h1>Weather Stations</h1>
+    <div class="status-box">
+      <span class="status" id="status">Loading…</span>
+      <span class="nav"><span id="user"></span> ·
+        <form method="post" action="/logout"><button class="linkbutton" type="submit">Log out</button></form></span>
+    </div>
+  </header>
+  <div class="banner hidden" id="banner">Live data unavailable: the frontend has no connection to the broker. The values shown are the latest stored.</div>
+  <section class="stations" id="stations"></section>
+  <p class="empty hidden" id="empty">No station has published to the broker yet.</p>
+</main>
+<script src="/static/common.js"></script>
+<script src="/static/overview.js"></script>
+</body>
+</html>

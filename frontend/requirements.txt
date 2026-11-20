@@ -1,0 +1,9 @@
+# Runtime dependencies of the frontend, pinned (NFR-4.1).
+fastapi==0.165.0
+starlette==1.10.0
+pydantic==2.14.4
+uvicorn[standard]==0.54.0
+python-multipart==0.0.34
+aiomqtt==2.5.1
+paho-mqtt==2.2.0
+argon2-cffi==25.1.0

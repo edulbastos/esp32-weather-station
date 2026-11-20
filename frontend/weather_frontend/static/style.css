@@ -1,0 +1,111 @@
+/* Look of the station page (main/web_page.html), shared by every page (FR-4.8). */
+:root {
+  --bg: #f5f6f8; --card: #ffffff; --inner: #f8f9fb; --text: #1b2330; --muted: #677085; --line: #e3e6eb;
+  --temp: #d9480f; --hum: #1c6dc9; --pres: #2b8a3e;
+  --ok: #2b8a3e; --warn: #e67700; --off: #8b95a7;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #11151b; --card: #1a2029; --inner: #151a22; --text: #e6e9ee; --muted: #8b95a7; --line: #2a323e;
+    --temp: #ff8c5a; --hum: #62adff; --pres: #5fd07a;
+    --ok: #5fd07a; --warn: #ffb347; --off: #6b7487;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+       font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 960px; margin: 0 auto; padding: 16px; }
+main.wide { max-width: 1240px; }
+header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 4px 16px; }
+h1 { font-size: 20px; margin: 0; }
+h2 { font-size: 16px; margin: 24px 0 8px; }
+a { color: var(--hum); }
+.status-box { margin-left: auto; text-align: right; }
+.status { display: block; color: var(--muted); font-size: 13px; }
+.status.error, .error { color: var(--temp); }
+.hidden { display: none !important; }
+
+/* Header navigation: overview link, user, log out (FR-2.5). */
+.nav { display: block; color: var(--muted); font-size: 13px; }
+.nav form { display: inline; }
+.linkbutton { font: inherit; color: var(--hum); background: none; border: 0; padding: 0; cursor: pointer;
+              text-decoration: underline; }
+.banner { margin-top: 12px; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--warn);
+          color: var(--warn); font-size: 13px; }
+
+/* Value cards of the station page. */
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-top: 16px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.label { color: var(--muted); font-size: 13px; }
+.value { font-size: 34px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.unit { font-size: 15px; font-weight: 400; color: var(--muted); margin-left: 4px; }
+.sub { color: var(--muted); font-size: 13px; min-height: 1.45em; }
+.value-text { font-size: 20px; font-weight: 600; line-height: 1.25; margin: 8px 0 4px; min-height: 1.25em; }
+
+/* Charts. */
+.charts { display: grid; gap: 12px; }
+.chart svg { display: block; width: 100%; height: 170px; margin-top: 4px; }
+.chart text { fill: var(--muted); font-size: 11px; }
+.chart .grid { stroke: var(--line); }
+.chart svg { touch-action: pan-y; cursor: crosshair; user-select: none; -webkit-user-select: none; }
+.chart .series { fill: none; stroke-width: 1.8; stroke-linejoin: round; }
+.chart .cursor { pointer-events: none; }
+.chart .cursor line { stroke: var(--muted); stroke-dasharray: 3 3; }
+.chart .cursor circle { stroke: var(--card); stroke-width: 2; }
+.chart .cursor text { fill: var(--text); font-weight: 600; font-variant-numeric: tabular-nums;
+                      paint-order: stroke; stroke: var(--card); stroke-width: 4px; stroke-linejoin: round; }
+.s0 { stroke: var(--temp); fill: var(--temp); }
+.s1 { stroke: var(--hum); fill: var(--hum); }
+.s2 { stroke: var(--pres); fill: var(--pres); }
+.chart .series.s0, .chart .series.s1, .chart .series.s2 { fill: none; }
+.chart-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center;
+              gap: 8px; margin: 24px 0 8px; }
+.chart-head h2 { margin: 0; }
+.ranges { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.ranges button { font: inherit; font-size: 13px; padding: 4px 12px; border: 0; cursor: pointer;
+                 background: var(--card); color: var(--muted); }
+.ranges button + button { border-left: 1px solid var(--line); }
+.ranges button[aria-pressed="true"] { background: var(--hum); color: #fff; }
+
+footer { margin-top: 16px; font-size: 13px; color: var(--muted); }
+.footer-row { display: flex; flex-wrap: wrap; gap: 0 16px; }
+.system { margin-left: auto; text-align: right; }
+
+/* Station state (FR-4.4). */
+.state { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); white-space: nowrap; }
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+.state-online .dot { background: var(--ok); }
+.state-no_data .dot { background: var(--warn); }
+.state-offline .dot { border: 2px solid var(--off); }
+.greyed .sensor, .greyed .cards, .greyed .charts { opacity: 0.55; }
+
+/* Station page: one section per sensor (FR-4.2). */
+.sensor-section + .sensor-section { margin-top: 28px; padding-top: 4px; border-top: 1px solid var(--line); }
+.sensor-title { font-size: 15px; margin: 20px 0 0; }
+.sensor-title .label { font-weight: 400; }
+
+/* Overview: one card per station, one card per sensor inside (FR-4.1). */
+.stations { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 400px), 1fr));
+            gap: 16px; margin-top: 16px; align-items: start; }
+.station-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.station-name { font-size: 17px; font-weight: 600; text-decoration: none; color: var(--text); }
+.station-name:hover { text-decoration: underline; }
+.station-meta { color: var(--muted); font-size: 13px; margin: 2px 0 10px; }
+.sensor { background: var(--inner); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.sensor + .sensor { margin-top: 10px; }
+.mini-values { display: grid; grid-template-columns: repeat(auto-fit, minmax(105px, 1fr)); gap: 4px 12px; margin-top: 4px; }
+.mini-value { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mini .unit { font-size: 13px; }
+.forecast-line { margin-top: 6px; font-weight: 600; }
+.empty { color: var(--muted); margin-top: 24px; }
+
+/* Login (FR-2.2). */
+.login { max-width: 340px; margin: 12vh auto 0; }
+.login h1 { margin-bottom: 16px; }
+.login label { display: block; font-size: 13px; color: var(--muted); margin-top: 12px; }
+.login input { width: 100%; font: inherit; padding: 8px 10px; margin-top: 4px; border-radius: 8px;
+               border: 1px solid var(--line); background: var(--card); color: var(--text); }
+.login button { width: 100%; margin-top: 18px; font: inherit; font-weight: 600; padding: 9px; border: 0;
+                border-radius: 8px; background: var(--hum); color: #fff; cursor: pointer; }
+.login .error { min-height: 1.45em; margin-top: 12px; font-size: 13px; }
+.mini-arrow { font-size: 20px; font-weight: 600; margin-left: 4px; }

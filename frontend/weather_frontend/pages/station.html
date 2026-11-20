@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Weather Station</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<main>
+  <header>
+    <h1>Weather Station<span id="title-name"></span></h1>
+    <div class="status-box">
+      <span class="status" id="status">Loading…</span>
+      <span class="status" id="rssi"></span>
+      <span class="nav"><a href="/">All stations</a> · <span id="user"></span> ·
+        <form method="post" action="/logout"><button class="linkbutton" type="submit">Log out</button></form></span>
+    </div>
+  </header>
+  <div class="banner hidden" id="banner">Live data unavailable: the frontend has no connection to the broker. The values shown are the latest stored.</div>
+
+  <div id="sensors"></div>
+  <p class="empty hidden" id="empty"></p>
+
+  <footer id="footer" class="hidden">
+    <div class="footer-row">
+      <span><a id="csv" href="#" download>Download the stored history (CSV)</a>
+        · <span id="history-info"></span></span>
+      <span class="system" id="system"></span>
+    </div>
+    <div id="station"></div>
+    <div id="metar"></div>
+    <div id="stored"></div>
+    <div id="changes"></div>
+  </footer>
+</main>
+<script src="/static/common.js"></script>
+<script src="/static/station.js"></script>
+</body>
+</html>
