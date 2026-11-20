@@ -19,9 +19,9 @@ login_max_failures = 5                              # FR-2.6, within login_windo
 login_window_s = 900
 
 [mqtt]
-host = "127.0.0.1"
+host = "127.0.0.1"                                  # "::1" if the local listener binds IPv6 only
 port = 1883
-username = "weather-frontend"                       # read-only account (section 6.5)
+username = "weather-frontend"                       # account of its own in /etc/mosquitto/pwfile (section 6.5)
 password = "CHANGE-ME"
 client_id = "weather-frontend"                      # another one for a local test (section 6.6)
 topic_prefix = "weather-station"

@@ -37,20 +37,17 @@ Python 3.11 or later. The commands below assume Debian or Ubuntu and are run as 
 
    Edit `/etc/weather-frontend/config.toml`: at least `[mqtt] password`.
 
-2. Broker account, read-only (Mosquitto, port 1883):
+2. Broker account (Mosquitto, port 1883, password authentication, no access list):
 
    ```sh
-   mosquitto_passwd /etc/mosquitto/passwd weather-frontend
+   mosquitto_passwd /etc/mosquitto/pwfile weather-frontend   # never -c: it recreates the file without the other accounts
+   systemctl reload mosquitto
+   mosquitto_sub -h 127.0.0.1 -u weather-frontend -P '<password>' -t 'weather-station/#' -v -C 3 -W 10   # check
    ```
 
-   In the `acl_file` of Mosquitto:
+   Put the same password into `[mqtt] password` of the configuration. If the check is refused although the password is right, see where the local listener listens (`ss -ltnp | grep 1883`): a `listener 1883 localhost` may bind `::1` only; then set `host = "::1"` in `[mqtt]`.
 
-   ```
-   user weather-frontend
-   topic read weather-station/#
-   ```
-
-   If the broker had no `acl_file` before, the stations also need a line, or they can no longer publish: `pattern write weather-station/%c/#` (the client ID of a station is its device identifier). Then `systemctl reload mosquitto`.
+   The frontend never publishes; the broker does not enforce it, since it has no access list (an `acl_file` would restrict every account of the shared broker). A read-only access list is planned for a later version; section 6.5 of the specification describes what it requires.
 
 3. Service:
 

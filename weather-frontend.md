@@ -1,6 +1,6 @@
 # Functional Specification: Weather Station Frontend
 
-**Version:** 1.0.0
+**Version:** 1.0.1
 
 ## Document Control
 
@@ -9,6 +9,7 @@
 | Version | Date       | Changes                                   |
 |---------|------------|-------------------------------------------|
 | 1.0.0   | 2026-11-20 | Initial specification: authenticated, read-only web frontend at `weather.elbastos.com.br` fed by the MQTT messages of the stations. |
+| 1.0.1   | 2026-11-20 | Broker access list optional: the broker is shared with other services and has none, so the backend account is protected by its password only (FR-1.3, FR-3.1 changed; section 6.5). Access list and TLS moved to section 7. |
 
 ### Requirement Markers
 *   **`[PROPOSED]`**: The requirement is new and not implemented yet.
@@ -63,7 +64,7 @@ A backend service on the server subscribes to the topics of all stations on the 
 ### 3.1 General
 *   **FR-1.1** [v1.0.0]: The frontend MUST be served at `https://weather.elbastos.com.br/` through the existing nginx server, which terminates TLS and forwards to the backend on `127.0.0.1` (section 6.3). The backend MUST NOT listen on a public address.
 *   **FR-1.2** [v1.0.0]: Every page and every API endpoint except the login page (FR-2.2), the static files under `/static/` (style sheet, scripts, icon; they hold no data) and `/healthz` (NFR-2.4) MUST require an authenticated session (FR-2.x). An unauthenticated request for a page is redirected to `/login?next=<path>`; one for an API endpoint gets `401 Unauthorized` with no data.
-*   **FR-1.3** [v1.0.0]: The frontend MUST be read-only toward the stations: it offers no control that sends anything to a station, and the backend MUST NOT publish any MQTT message. This is enforced twice: the code has no publish call, and the broker account of the backend may only subscribe (FR-3.1).
+*   **FR-1.3** [v1.0.0, CHANGED v1.0.1]: Since v1.0.1 the read-only behavior is enforced by the code alone: the broker is shared with other services and has no access list, and adding one would restrict every account (section 6.5); a read-only access list for the backend account is optional and planned for a later version (section 7). The frontend MUST be read-only toward the stations: it offers no control that sends anything to a station, and the backend MUST NOT publish any MQTT message; the code has no publish call. Before v1.0.1: "This is enforced twice: the code has no publish call, and the broker account of the backend may only subscribe (FR-3.1)."
 *   **FR-1.4** [v1.0.0]: All texts of the page are in English, as on the station. Times are shown in the time zone of the browser, in 24-hour format, as on the station page.
 
 ### 3.2 Authentication
@@ -77,7 +78,7 @@ A backend service on the server subscribes to the topics of all stations on the 
 *   **FR-2.8** [v1.0.0]: Users MUST be managed on the server with a command-line tool (section 6.4): `user add <name>`, `user passwd <name>`, `user del <name>`, `user list` (name, creation time, last login, number of open sessions). Passwords are read from the terminal without echo, never from the command line.
 
 ### 3.3 MQTT Ingestion
-*   **FR-3.1** [v1.0.0]: The backend MUST connect to the Mosquitto broker on the same server (default `mqtt://127.0.0.1:1883`, configurable) with a user name and password of its own (Mosquitto `password_file`), whose access list allows only reading `weather-station/#`. It subscribes with QoS 1 to:
+*   **FR-3.1** [v1.0.0, CHANGED v1.0.1]: Since v1.0.1 the access list is optional (FR-1.3); before, the text read "whose access list allows only reading `weather-station/#`". The backend MUST connect to the Mosquitto broker on the same server (default `mqtt://127.0.0.1:1883`, configurable) with a user name and password of its own (Mosquitto `password_file`). It subscribes with QoS 1 to:
     *   `weather-station/+/info` (station FR-10.4),
     *   `weather-station/+/status` (station FR-6.7),
     *   `weather-station/+/data` (station FR-6.3, FR-10.4),
@@ -228,32 +229,37 @@ server {
 `weather-frontend [--config FILE] <command>` (installed with the package; `python -m weather_frontend` in a checkout), run as the service user on the server: `serve` (used by systemd), `user add|passwd|del|list`, `import <csv>`, `backup`. It reads the same configuration file.
 
 ### 6.5 Broker Account (Mosquitto)
-The broker is Mosquitto on port 1883, with user name and password authentication. The frontend gets an account of its own:
+[CHANGED v1.0.1] The broker is Mosquitto on port 1883, shared with other services, with user name and password authentication (`allow_anonymous false`, `password_file /etc/mosquitto/pwfile`) and without TLS or an access list, on purpose: older clients of other services do not support TLS. Without `per_listener_settings true` these settings apply to every listener, so the local listener the backend uses also asks for the password. The frontend gets an account of its own:
 
 ```
-# create the account (password prompted)
-mosquitto_passwd /etc/mosquitto/passwd weather-frontend
+# add the account (password prompted); never -c, which recreates the file without the other accounts
+mosquitto_passwd /etc/mosquitto/pwfile weather-frontend
+systemctl reload mosquitto      # rereads the password file without dropping connections
+```
 
-# acl_file: read only, no publish (FR-1.3)
+The broker credentials go into `/etc/weather-frontend/config.toml` (`[mqtt] host`, `port`, `username`, `password`; NFR-3.3). The backend connects to `127.0.0.1`; when the listener is declared as `listener 1883 localhost` and the name resolves to `::1` only, `host = "::1"` is set instead (check with `ss -ltnp | grep 1883`).
+
+**Optional access list** (planned for a later version, section 7). With an `acl_file`, everything not granted is denied to every account, and the rules add up (a `pattern` line also grants the frontend). On a shared broker each existing account therefore needs its own lines, e.g. `user <account>` followed by `topic readwrite #` (and `topic read $SYS/#` where `$SYS` is used), anonymous clients the same lines before the first `user` line, and every account created later as well; the backend account then gets only:
+
+```
 user weather-frontend
 topic read weather-station/#
 ```
 
-When the broker does not use an `acl_file` yet, adding one also restricts the existing accounts: each station account then needs `topic write weather-station/<device_id>/#` (or `pattern write weather-station/%c/#`, since the client ID is the device identifier, station FR-10.1), and other subscribers their own `topic read` lines. Mosquitto is reloaded (`systemctl reload mosquitto`) after each change.
-
-The broker credentials go into `/etc/weather-frontend/config.toml` (`[mqtt] host`, `port`, `username`, `password`; NFR-3.3).
+Before v1.0.1 this section made the access list part of the installation (`mosquitto_passwd /etc/mosquitto/passwd weather-frontend` and the read-only lines above, with `topic write weather-station/<device_id>/#` or `pattern write weather-station/%c/#` for the stations when the broker had no `acl_file` yet).
 
 ### 6.6 Local Test
 The frontend can be run on a development machine without nginx, at `http://localhost:8081`, with a configuration file of its own:
 
 *   `public_origin = "http://localhost:8081"` (FR-2.7); browsers accept the `Secure` session cookie on `localhost`.
-*   The broker of the server reached through an SSH tunnel, `ssh -L 1883:127.0.0.1:1883 <server>`, with the read-only account of section 6.5, so the test receives the real messages of the stations without affecting them (FR-1.3). A second backend connected this way MUST use another client ID (`mqtt.client_id` in the configuration, default `weather-frontend`), or the broker would close the session of the service on the server (FR-3.2).
+*   The broker of the server reached through an SSH tunnel, `ssh -L 1883:127.0.0.1:1883 <server>`, with the account of section 6.5, so the test receives the real messages of the stations without affecting them (the frontend never publishes, FR-1.3). A second backend connected this way MUST use another client ID (`mqtt.client_id` in the configuration, default `weather-frontend`), or the broker would close the session of the service on the server (FR-3.2).
 *   A database file of its own.
 
 A local test covers the pages, the authentication, the live updates, the charts, the CSV download and import, and the `pytest` tests. The release is approved only after a test on the server behind nginx at `https://weather.elbastos.com.br`, which also covers what a local test cannot: the SSE stream through the proxy (`proxy_buffering off`), the client address from `X-Forwarded-For` for the rate limit (FR-2.6), TLS with HSTS, and the systemd service with its hardening (NFR-3.4).
 
 ## 7. Open Issues / Future Extensions
 
+*   **Broker access list and TLS:** a read-only access list for the backend account, so the broker enforces FR-1.3 as well (section 6.5 describes what it requires on the shared broker), and a TLS listener (`mqtts://`, port 8883) for the stations and other clients that support it, next to the plain listener for the older ones.
 *   **Per-sensor data topic in the station:** all sensors of a station publish to the same retained topic `weather-station/<device_id>/data`, so the broker keeps only the latest reading of the last sensor that published. The frontend does not depend on it (it is always subscribed and stores every reading), but a new subscriber would only see one sensor at once. A station requirement such as `weather-station/<device_id>/data/<index>` would fix this when a second sensor exists.
 *   **Heap and diagnostics over MQTT:** the station page shows the heap (station FR-8.9), which the MQTT messages do not carry; a periodic `.../health` message would let the frontend show it.
 *   **Station management** (no longer read-only): calibration, name, altitude, METAR airport, display, over MQTT commands to the station. Needs a station requirement for a command topic and roles in the frontend.
