@@ -423,7 +423,7 @@
         }
         const xx = sc.x(p.t), yy = sc.y(p.v[i]);
         const left = xx > (sc.L + sc.W - sc.R) / 2;
-        const label = `${p.v[i].toFixed(1)} ${c.unit} · ${fmtCursorTime(p.t)}`;
+        const label = `${p.v[i].toFixed(2)} ${c.unit} · ${fmtCursorTime(p.t)}`;
         grp.innerHTML =
           `<line x1="${xx.toFixed(1)}" x2="${xx.toFixed(1)}" y1="${sc.T}" y2="${sc.H - sc.B}"/>` +
           `<circle class="${c.series}" cx="${xx.toFixed(1)}" cy="${yy.toFixed(1)}" r="4"/>` +
