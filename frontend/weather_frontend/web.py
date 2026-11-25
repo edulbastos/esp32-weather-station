@@ -30,6 +30,7 @@ log = logging.getLogger(__name__)
 
 HERE = Path(__file__).parent
 PAGES = HERE / "pages"
+STATIC_LINK = re.compile(r'\b(href|src)="/static/([^"?]+)"')
 STATIC = HERE / "static"
 
 DEVICE_ID_RE = re.compile(r"^ws-[0-9a-f]{12}$")
@@ -80,7 +81,11 @@ def create_app(cfg: Config, broadcaster: Broadcaster | None = None, background: 
     broadcaster = broadcaster or Broadcaster()
     limiter = auth.RateLimiter(cfg.login_max_failures, cfg.login_window_s)
     local = threading.local()
-    pages = {name: (PAGES / f"{name}.html").read_text(encoding="utf-8")
+    # FR-4.8 (since v1.0.4): the static files are linked with the version as a
+    # query (`/static/style.css?v=1.0.4`), so every release reaches browsers
+    # that keep an older copy without asking (the pages themselves are no-store).
+    pages = {name: STATIC_LINK.sub(rf'\1="/static/\2?v={quote(__version__)}"',
+                                   (PAGES / f"{name}.html").read_text(encoding="utf-8"))
              for name in ("login", "overview", "station")}
 
     def conn() -> sqlite3.Connection:

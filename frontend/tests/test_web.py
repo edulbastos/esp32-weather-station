@@ -5,7 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from conftest import DEV, INFO, T0, data_msg
-from weather_frontend import auth, db
+from weather_frontend import __version__, auth, db
 from weather_frontend.ingest import Ingestor
 from weather_frontend.web import create_app, safe_next
 
@@ -38,6 +38,13 @@ def test_everything_needs_a_session(client):
     assert r.status_code == 303 and r.headers["location"] == f"/login?next=/station/{DEV}"
     assert client.get("/login").status_code == 200
     assert client.get("/static/style.css").status_code == 200
+
+
+def test_static_links_carry_the_version(client):
+    body = client.get("/login").text  # FR-4.8 since v1.0.4
+    assert f'href="/static/style.css?v={__version__}"' in body
+    assert 'href="/static/style.css"' not in body
+    assert client.get(f"/static/style.css?v={__version__}").status_code == 200
 
 
 def test_login_and_logout(client):

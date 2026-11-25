@@ -1,6 +1,6 @@
 # Functional Specification: Weather Station Frontend
 
-**Version:** 1.0.3
+**Version:** 1.0.4
 
 ## Document Control
 
@@ -12,6 +12,7 @@
 | 1.0.1   | 2026-11-20 | Broker access list optional: the broker is shared with other services and has none, so the backend account is protected by its password only (FR-1.3, FR-3.1 changed; section 6.5). Access list and TLS moved to section 7. |
 | 1.0.2   | 2026-11-20 | Documentation only: the installation guide (`frontend/README.md`) rewritten as one sequence from `git clone` to the first login, with a check per step, the three accounts explained, Python older than 3.11 (`uv`), and troubleshooting. |
 | 1.0.3   | 2026-11-25 | Station page: chart grid lines at round values, so a point lies at the height of the value its label shows, as on station v2.8.2 (station FR-8.4); the footer as a list of labelled lines aligned to the left, with the label above its text on a phone (FR-4.2 changed). |
+| 1.0.4   | 2026-11-25 | The pages link their style sheet, scripts and icon with the frontend version as a query (`/static/style.css?v=1.0.4`), so a browser that keeps an older copy loads the new files after a release; Chrome showed the v1.0.3 footer with the v1.0.2 style sheet until a forced reload (FR-4.8 changed). |
 
 ### Requirement Markers
 *   **`[PROPOSED]`**: The requirement is new and not implemented yet.
@@ -130,7 +131,7 @@ The layout has two levels: the **overview** (`/`) with one card per station, and
 *   **FR-4.5** [v1.0.0]: Values MUST be shown with the precision of the station page: one decimal for temperature, humidity, dew point and pressure; the tendency with one decimal and its class, e.g. `↓ -1.8 hPa in 3 h, falling`; `–` for a value that is missing.
 *   **FR-4.6** [v1.0.0]: The station footer MUST show the METAR check as the station page does (station FR-11.4): airport, time of the observation, reference QNH, station QNH, difference, the median with the number of samples, and the two suggestions; `–` when the station has no METAR airport.
 *   **FR-4.7** [v1.0.0]: The station page MUST offer the stored readings of the station as a CSV file, `history-<device_id>.csv`, with the columns `device_id,sensor_id,time,temperature_c,humidity_rh,pressure_hpa,pressure_msl_hpa,dew_point_c,rssi_dbm`, sent gzip-compressed by the backend to clients that accept it. The file covers the whole stored history by default; `from` and `to` (Unix times) limit it.
-*   **FR-4.8** [v1.0.0]: The page MUST work without external resources (no CDN, no web fonts, no analytics), adapt to phone screens and follow the light/dark setting of the browser, like the station page (station FR-8.2). It carries the tab icon of the station page.
+*   **FR-4.8** [v1.0.0, CHANGED v1.0.4]: The page MUST work without external resources (no CDN, no web fonts, no analytics), adapt to phone screens and follow the light/dark setting of the browser, like the station page (station FR-8.2). It carries the tab icon of the station page. [v1.0.4] The pages MUST link their files under `/static/` with the frontend version as a query (`/static/style.css?v=1.0.4`), so each release changes their addresses and every browser loads the new files; the pages themselves are never cached (`no-store`). Before v1.0.4 a browser could keep using an older style sheet or script after a release: Chrome showed the footer of v1.0.3 with the style sheet of v1.0.2 (labels not bold, texts indented) until a forced reload.
 
 ### 3.5 History and Charts
 *   **FR-5.1** [v1.0.0]: The backend MUST keep every reading for as long as the configuration says (`retention_days`, default 0 = forever). At the default publish interval of 60 s a sensor produces about 525,600 readings a year, some 40 MB of database with indexes. A daily job deletes readings older than the retention, when one is set.
