@@ -6,7 +6,7 @@
   const deviceId = decodeURIComponent(location.pathname.split("/").pop());
   const RANGES = { 1: "hour", 24: "24 hours", 168: "7 days" };
   const PERIODS = [1, 24, 168];
-  // The three charts of a sensor: channel, payload field, series class, axis digits, unit.
+  // The three charts of a sensor: channel, payload field, series class, finest axis step (10^-digits), unit.
   const CHARTS = [
     { channel: "temperature", label: "Temperature (°C)", series: "s0", digits: 1, unit: "°C" },
     { channel: "humidity", label: "Humidity (%RH)", series: "s1", digits: 0, unit: "%RH" },
@@ -328,10 +328,10 @@
     // FR-4.6: METAR check of station FR-11.4.
     const m = st.metar;
     if (!m) {
-      $("metar").textContent = "METAR check: –";
+      $("metar").textContent = "–";
       $("metar").title = "";
     } else {
-      let text = "METAR " + m.station + ", observed " + WS.fmtTime(m.obs_time) + ": airport " + WS.fmt(m.qnh_ref_hpa) +
+      let text = m.station + ", observed " + WS.fmtTime(m.obs_time) + ": airport " + WS.fmt(m.qnh_ref_hpa) +
         " hPa, station " + WS.fmt(m.qnh_hpa) + " hPa, difference " + WS.signed(m.diff_hpa) + " hPa";
       text += m.median_diff_hpa != null
         ? " · median " + WS.signed(m.median_diff_hpa) + " hPa of " + m.samples + " samples · to cancel it: cal set pressure " +
@@ -343,10 +343,12 @@
 
     const h = st.history || {};
     $("stored").textContent = h.readings
-      ? "Stored by the frontend: " + h.readings.toLocaleString() + " readings since " + WS.fmtTime(h.first)
-      : "No readings stored yet";
-    $("changes").textContent = (st.sensor_changes || []).map((c) =>
-      "Sensor at position " + c.index + " replaced " + WS.fmtTime(c.time) + ": " + c.old_id + " → " + c.new_id).join(" · ");
+      ? "stored by the frontend: " + h.readings.toLocaleString() + " readings since " + WS.fmtTime(h.first)
+      : "no readings stored yet";
+    const changes = st.sensor_changes || [];
+    $("changes-row").classList.toggle("hidden", !changes.length);
+    $("changes").textContent = changes.map((c) =>
+      "position " + c.index + " replaced " + WS.fmtTime(c.time) + ": " + c.old_id + " → " + c.new_id).join(" · ");
   }
 
   // -- charts -------------------------------------------------------------

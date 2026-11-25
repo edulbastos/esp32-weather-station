@@ -24,15 +24,15 @@
   <p class="empty hidden" id="empty"></p>
 
   <footer id="footer" class="hidden">
-    <div class="footer-row">
-      <span><a id="csv" href="#" download>Download the stored history (CSV)</a>
-        · <span id="history-info"></span></span>
-      <span class="system" id="system"></span>
-    </div>
-    <div id="station"></div>
-    <div id="metar"></div>
-    <div id="stored"></div>
-    <div id="changes"></div>
+    <dl class="facts">
+      <div><dt>Station</dt><dd id="station"></dd></div>
+      <div><dt>System</dt><dd id="system"></dd></div>
+      <div><dt>METAR</dt><dd id="metar"></dd></div>
+      <div><dt>Charts</dt><dd id="history-info"></dd></div>
+      <div><dt>History</dt><dd><a id="csv" href="#" download>Download the stored history (CSV)</a>
+        · <span id="stored"></span></dd></div>
+      <div id="changes-row" class="hidden"><dt>Sensors</dt><dd id="changes"></dd></div>
+    </dl>
   </footer>
 </main>
 <script src="/static/common.js"></script>

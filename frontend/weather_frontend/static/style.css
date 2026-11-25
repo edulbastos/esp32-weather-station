@@ -68,8 +68,17 @@ a { color: var(--hum); }
 .ranges button[aria-pressed="true"] { background: var(--hum); color: #fff; }
 
 footer { margin-top: 16px; font-size: 13px; color: var(--muted); }
-.footer-row { display: flex; flex-wrap: wrap; gap: 0 16px; }
-.system { margin-left: auto; text-align: right; }
+/* Footer: one labelled line per subject, all aligned to the left; on a phone
+   the label goes above its text. */
+.facts { margin: 0; display: grid; gap: 4px; }
+.facts > div { display: grid; grid-template-columns: 5em minmax(0, 1fr); gap: 12px; }
+.facts dt { font-weight: 600; }
+.facts dd { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 560px) {
+  .facts { gap: 8px; }
+  .facts > div { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .facts dt { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+}
 
 /* Station state (FR-4.4). */
 .state { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); white-space: nowrap; }

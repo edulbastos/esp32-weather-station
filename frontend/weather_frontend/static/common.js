@@ -161,6 +161,28 @@ const WS = (() => {
     $("banner").classList.toggle("hidden", connected !== false);
   }
 
+  // FR-4.2 (since v1.0.3): the value axis of a chart. Grid lines at round values, a step of
+  // 1, 2 or 5 times a power of ten and at least 10^-digits, with the data
+  // range widened to whole steps, so each line lies exactly at the value of
+  // its label: the smallest such step that needs at most 6 intervals, and at
+  // least 2 intervals.
+  function niceAxis(min, max, digits) {
+    const minStep = Math.pow(10, -digits);
+    if (max - min < minStep) { min -= minStep / 2; max += minStep / 2; }
+    let step, k0, k1;
+    for (let i = 0; ; i++) {
+      step = [1, 2, 5][i % 3] * Math.pow(10, Math.floor(i / 3)) * minStep;
+      k0 = Math.floor(min / step + 1e-9);
+      k1 = Math.ceil(max / step - 1e-9);
+      if (k1 - k0 <= 6) break;
+    }
+    if (k1 - k0 < 2) { k0 -= 1; k1 = Math.max(k1 + 1, k0 + 2); }
+    const ticks = [];
+    for (let k = k0; k <= k1; k++) ticks.push(k * step);
+    const decimals = Math.max(0, Math.ceil(-Math.log10(step) - 1e-9));
+    return { lo: k0 * step, hi: k1 * step, ticks, decimals };
+  }
+
   // Chart of the station page (FR-8.4 of the station): grid, axes, a line that
   // breaks after `gap` seconds. Returns the scale for the cursor.
   function drawChart(svg, pts, series, digits, gap) {
@@ -172,17 +194,16 @@ const WS = (() => {
       return null;
     }
     const t0 = pts[0][0], t1 = pts[pts.length - 1][0];
-    let vmin = Math.min(...pts.map((p) => p[1])), vmax = Math.max(...pts.map((p) => p[1]));
-    const pad = Math.max((vmax - vmin) * 0.1, Math.pow(10, -digits));
-    vmin -= pad; vmax += pad;
+    const ax = niceAxis(Math.min(...pts.map((p) => p[1])), Math.max(...pts.map((p) => p[1])), digits);
+    const vmin = ax.lo, vmax = ax.hi;
     const x = (t) => L + (t - t0) / Math.max(1, t1 - t0) * (W - L - R);
     const y = (v) => T + (vmax - v) / (vmax - vmin) * (H - T - B);
 
     let out = "";
-    for (let i = 0; i <= 3; i++) {
-      const v = vmin + (vmax - vmin) * i / 3, yy = y(v).toFixed(1);
+    for (const v of ax.ticks) {
+      const yy = y(v).toFixed(1);
       out += `<line class="grid" x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}"/>`;
-      out += `<text x="${L - 6}" y="${yy}" dy="4" text-anchor="end">${v.toFixed(digits)}</text>`;
+      out += `<text x="${L - 6}" y="${yy}" dy="4" text-anchor="end">${v.toFixed(ax.decimals)}</text>`;
     }
     const ticks = W < 420 ? 2 : 4;
     const days = t1 - t0 > 2 * 86400;
