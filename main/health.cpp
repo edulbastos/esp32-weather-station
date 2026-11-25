@@ -493,7 +493,10 @@ int cmd_sys(int, char **)
         }
         printf("Wi-Fi: %s", !net_time::associated() ? "not associated" : net_time::has_ip() ? "connected" : "associated, no IP");
         if (net_time::associated() && esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
-            printf(", RSSI %d dBm, channel %u", ap.rssi, ap.primary);
+            // The access point (BSSID): a mesh offers one network from several
+            // nodes, and traffic between clients of different nodes can fail.
+            printf(", access point %02x:%02x:%02x:%02x:%02x:%02x, RSSI %d dBm, channel %u", ap.bssid[0], ap.bssid[1],
+                   ap.bssid[2], ap.bssid[3], ap.bssid[4], ap.bssid[5], ap.rssi, ap.primary);
         }
         wifi_ps_type_t ps = WIFI_PS_NONE;
         esp_wifi_get_ps(&ps);
