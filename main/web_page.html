@@ -487,7 +487,7 @@ function drawCursor() {
     }
     const xx = s.x(p.t), yy = s.y(p.v[i]);
     const left = xx > (s.L + s.W - s.R) / 2;  // label on the side with more room
-    const label = `${p.v[i].toFixed(1)} ${c.unit} · ${fmtCursorTime(p.t)}`;
+    const label = `${p.v[i].toFixed(2)} ${c.unit} · ${fmtCursorTime(p.t)}`;
     g.innerHTML =
       `<line x1="${xx.toFixed(1)}" x2="${xx.toFixed(1)}" y1="${s.T}" y2="${s.H - s.B}"/>` +
       `<circle cx="${xx.toFixed(1)}" cy="${yy.toFixed(1)}" r="4" style="fill:${c.color}"/>` +
